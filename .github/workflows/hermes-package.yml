@@ -2,13 +2,15 @@ name: Hermes package
 on:
   push:
     branches: [ hermes ]
+  pull_request:
+    branches: [ hermes ]
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: hermes-package
+  group: hermes-package-${{ github.ref }}
   cancel-in-progress: true
 
 # Packages follow Hermes' own: one per distribution release, each built in that
@@ -21,6 +23,16 @@ env:
   VULKAN_HEADERS_TAG: v1.4.366
 
 jobs:
+  packaging-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Check packaging scripts and private launcher
+        run: |
+          bash -n packaging/hermes/*.sh packaging/hermes/PKGBUILD
+          dash -n packaging/hermes/gamescope-launch
+          packaging/hermes/check-launcher.sh
+
   version:
     runs-on: ubuntu-latest
     outputs:
@@ -33,7 +45,7 @@ jobs:
         run: echo "version=$(packaging/hermes/version.sh)" >> "$GITHUB_OUTPUT"
 
   arch:
-    needs: version
+    needs: [ version, packaging-checks ]
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -64,12 +76,14 @@ jobs:
           if-no-files-found: error
 
   deb:
-    needs: version
+    needs: [ version, packaging-checks ]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        ubuntu: [ "24.04", "26.04" ]
+        # wlroots 0.20 requires newer Wayland/libdrm/xkbcommon/pixman than
+        # stock 24.04. Keep native packages honest; a 24.04 backport is separate.
+        ubuntu: [ "26.04" ]
     container: ubuntu:${{ matrix.ubuntu }}
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -120,7 +134,7 @@ jobs:
           if-no-files-found: error
 
   rpm:
-    needs: version
+    needs: [ version, packaging-checks ]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -166,16 +180,81 @@ jobs:
           path: out/*.rpm
           if-no-files-found: error
 
-  # Each package that built replaces its own predecessor on the rolling
-  # release, so one distribution failing does not take the others' packages
-  # away.
-  publish:
+  # Install in a fresh release container, without build dependencies masking
+  # missing runtime Requires/Depends. Only validated packages reach publishing.
+  smoke:
     needs: [ arch, deb, rpm ]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: archlinux:base
+            manager: pacman
+            artifact: gamescope-hermes-arch
+          - image: ubuntu:26.04
+            manager: apt
+            artifact: gamescope-hermes-ubuntu26.04
+          - image: fedora:43
+            manager: dnf
+            artifact: gamescope-hermes-fc43
+          - image: fedora:44
+            manager: dnf
+            artifact: gamescope-hermes-fc44
+    container: ${{ matrix.image }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Prepare clean runtime container
+        shell: bash
+        run: |
+          case '${{ matrix.manager }}' in
+            pacman)
+              pacman-key --init
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm --needed git
+              ;;
+            apt)
+              apt-get update
+              apt-get install -y --no-install-recommends ca-certificates git
+              ;;
+            dnf) dnf install -y git ;;
+          esac
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: artifacts
+      - name: Install package and check userspace startup
+        shell: bash
+        run: |
+          case '${{ matrix.manager }}' in
+            pacman) pacman -U --noconfirm artifacts/*.pkg.tar.zst ;;
+            apt) apt-get install -y --no-install-recommends ./artifacts/*.deb ;;
+            dnf) dnf install -y artifacts/*.rpm ;;
+          esac
+          packaging/hermes/check-installed.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: validated-${{ matrix.artifact }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  # Each package that passed installation replaces its own predecessor on the rolling
+  # release, so one distribution failing does not take the others' packages
+  # away.
+  publish:
+    needs: smoke
+    if: ${{ !cancelled() && github.event_name != 'pull_request' && github.ref == 'refs/heads/hermes' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: validated-gamescope-hermes-*
           path: artifacts
           merge-multiple: true
       - name: Publish to the hermes-nightly release

@@ -1,3 +1,37 @@
+# Gamescope for Hermes
+
+This fork of [ValveSoftware/gamescope](https://github.com/ValveSoftware/gamescope)
+provides the compositor used by [Hermes](https://github.com/MrOz59/Hermes)
+isolated streaming sessions. Each session can scan out on its own
+[Hermes-KMS](https://github.com/MrOz59/Hermes-KMS) card, render on a real GPU,
+and use its assigned input seat while the host desktop remains available.
+
+Development and packages live on the **[`hermes`](https://github.com/MrOz59/gamescope/tree/hermes)**
+branch. `master` is the upstream base. The fork keeps a small patch set:
+
+| Change | Purpose |
+| --- | --- |
+| `--prefer-drm` / `GAMESCOPE_PREFER_DRM` | Select the KMS scanout card independently of the Vulkan rendering GPU. |
+| Honor `XDG_SEAT` for libinput | Select the session's input devices when a private seatd broker reports `seat0`. |
+| Send `wl_touch.frame` after passthrough touch events | Deliver complete touch updates to clients such as KWin and Qt. |
+
+The `gamescope-hermes` packages install under `/usr/lib/hermes-gamescope`, with a
+`gamescope-hermes` launch command. The launcher selects the matching private
+helpers and Vulkan WSI manifest for its child processes. It coexists with the
+distribution's `gamescope` installation.
+
+Nightly x86-64 packages target **Arch/CachyOS, Ubuntu 26.04, and Fedora 43/44**.
+Ubuntu 24.04 support is pending a separate dependency backport; the Ubuntu 26.04
+package is not a 24.04 package. Build success and the GPU-free installation
+checks do not certify a complete DRM/input/HDR streaming session.
+
+See **[HERMES.md](HERMES.md)** for installation, patch credits, setup constraints
+and maintenance, or download the
+[`hermes-nightly` packages](https://github.com/MrOz59/gamescope/releases/tag/hermes-nightly).
+The original Gamescope documentation follows.
+
+---
+
 ## gamescope: the micro-compositor formerly known as steamcompmgr
 
 In an embedded session usecase, gamescope does the same thing as steamcompmgr, but with less extra copies and latency:
