@@ -40,7 +40,7 @@ Version: ${version}
 Section: x11
 Priority: optional
 Architecture: amd64
-Depends: ${depends}, xwayland
+Depends: ${depends}, libvulkan1, hwdata, xkb-data, xwayland
 Maintainer: Hermes
 Homepage: https://github.com/MrOz59/gamescope
 Description: Gamescope build for Hermes isolated sessions

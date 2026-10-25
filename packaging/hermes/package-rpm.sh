@@ -28,6 +28,9 @@ Summary:        Gamescope build for Hermes isolated sessions
 License:        BSD-2-Clause
 URL:            https://github.com/MrOz59/gamescope
 Requires:       xorg-x11-server-Xwayland
+Requires:       vulkan-loader
+Requires:       hwdata
+Requires:       xkeyboard-config
 
 # Built by the job that calls this script and only copied in here.
 %global debug_package %{nil}

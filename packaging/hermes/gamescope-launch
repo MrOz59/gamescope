@@ -1,0 +1,8 @@
+#!/bin/sh
+# Resolve the public symlink as well as direct private-prefix invocations.
+set -eu
+prefix=$(dirname -- "$(dirname -- "$(readlink -f -- "$0")")")
+PATH="$prefix/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+XDG_DATA_DIRS="$prefix/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export PATH XDG_DATA_DIRS
+exec "$prefix/libexec/gamescope" "$@"

@@ -35,8 +35,17 @@ case "$action" in
   install)
     dest=${1:?usage: build.sh install <build-dir> <destdir>}
     meson install -C "$build" --destdir "$dest" --skip-subprojects
+    # Helpers are spawned by name, and Vulkan discovers the WSI manifest from
+    # XDG_DATA_DIRS. Keep both private to this launch, without replacing the
+    # distribution's gamescope or registering our layer globally.
+    install -d "$dest$prefix/libexec" "$dest/usr/bin"
+    mv "$dest$prefix/bin/gamescope" "$dest$prefix/libexec/gamescope"
+    install -m755 "$here/gamescope-launch" "$dest$prefix/bin/gamescope"
+    ln -sfn ../lib/hermes-gamescope/bin/gamescope "$dest/usr/bin/gamescope-hermes"
     install -Dm644 "$root/LICENSE" "$dest/usr/share/licenses/gamescope-hermes/LICENSE"
     install -Dm644 "$root/HERMES.md" "$dest/usr/share/doc/gamescope-hermes/HERMES.md"
+    test -s "$dest/usr/share/doc/gamescope-hermes/HERMES.md"
+    test -s "$dest/usr/share/licenses/gamescope-hermes/LICENSE"
     ;;
   *)
     echo "usage: build.sh compile|install <build-dir> ..." >&2
