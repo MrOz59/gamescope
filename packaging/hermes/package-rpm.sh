@@ -16,7 +16,7 @@ trap 'rm -rf "$top"' EXIT
 mkdir -p "$top"/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
 files=$(cd "$tree" && {
-  find ./usr/lib/hermes-gamescope -type d -printf '%%dir /%P\n'
+  find . -type d -path './usr/lib/hermes-gamescope*' -printf '%%dir /%P\n'
   find . \( -type f -o -type l \) -printf '/%P\n'
 } | sort)
 

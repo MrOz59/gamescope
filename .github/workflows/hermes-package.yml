@@ -54,7 +54,7 @@ jobs:
           chown -R builder: "$GITHUB_WORKSPACE"
           cd packaging/hermes
           sudo -u builder git config --global --add safe.directory '*'
-          sudo -u builder makepkg -s --noconfirm
+          sudo -u builder ../../packaging/hermes/ci-step.sh "makepkg" makepkg -s --noconfirm
           mkdir -p "$GITHUB_WORKSPACE/out"
           cp ./*.pkg.tar.zst "$GITHUB_WORKSPACE/out/"
       - uses: actions/upload-artifact@v4
@@ -74,10 +74,19 @@ jobs:
     env:
       DEBIAN_FRONTEND: noninteractive
     steps:
-      - name: Install build dependencies
+      # git first: the checkout needs it, and the dependency helper lives in
+      # the tree.
+      - name: Install git
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends \
+          apt-get install -y --no-install-recommends ca-certificates git
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Install build dependencies
+        run: |
+          packaging/hermes/ci-apt-install.sh \
             ca-certificates git build-essential meson ninja-build cmake pkg-config \
             python3 glslang-tools dpkg-dev file \
             libvulkan-dev libx11-dev libx11-xcb-dev libxmu-dev libxcomposite-dev \
@@ -94,20 +103,16 @@ jobs:
           git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
           cmake -S /tmp/vulkan-headers -B /tmp/vulkan-headers/build -DCMAKE_INSTALL_PREFIX=/opt/vulkan-headers
           cmake --install /tmp/vulkan-headers/build
-      - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-          submodules: recursive
       - name: Build
         run: |
           git config --global --add safe.directory '*'
-          packaging/hermes/build.sh compile build \
+          packaging/hermes/ci-step.sh "Build" packaging/hermes/build.sh compile build \
             -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include
-          packaging/hermes/build.sh install build "$PWD/stage"
+          packaging/hermes/ci-step.sh "Install" packaging/hermes/build.sh install build "$PWD/stage"
       - name: Package
         run: |
           mkdir -p out
-          packaging/hermes/package-deb.sh stage "${{ needs.version.outputs.version }}" "${{ matrix.ubuntu }}" out
+          packaging/hermes/ci-step.sh "Package" packaging/hermes/package-deb.sh stage "${{ needs.version.outputs.version }}" "${{ matrix.ubuntu }}" out
       - uses: actions/upload-artifact@v4
         with:
           name: gamescope-hermes-ubuntu${{ matrix.ubuntu }}
@@ -148,13 +153,13 @@ jobs:
       - name: Build
         run: |
           git config --global --add safe.directory '*'
-          packaging/hermes/build.sh compile build \
+          packaging/hermes/ci-step.sh "Build" packaging/hermes/build.sh compile build \
             -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include
-          packaging/hermes/build.sh install build "$PWD/stage"
+          packaging/hermes/ci-step.sh "Install" packaging/hermes/build.sh install build "$PWD/stage"
       - name: Package
         run: |
           mkdir -p out
-          packaging/hermes/package-rpm.sh stage "${{ needs.version.outputs.version }}" out
+          packaging/hermes/ci-step.sh "Package" packaging/hermes/package-rpm.sh stage "${{ needs.version.outputs.version }}" out
       - uses: actions/upload-artifact@v4
         with:
           name: gamescope-hermes-fc${{ matrix.fedora }}
