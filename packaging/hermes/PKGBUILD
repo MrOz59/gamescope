@@ -4,7 +4,7 @@
 # MrOz59/gamescope) and installs it under /usr/lib/hermes-gamescope, beside
 # the distribution's gamescope rather than over it: a Steam Deck-style
 # session or the desktop keeps the Gamescope it already uses, and Hermes
-# looks in this prefix first.
+# looks in this prefix first. build.sh holds the build every package shares.
 #
 #   git clone --recursive --branch hermes https://github.com/MrOz59/gamescope.git
 #   cd gamescope/packaging/hermes && makepkg -si
@@ -16,6 +16,7 @@ pkgdesc="Gamescope build for Hermes isolated sessions (scanout on another device
 arch=('x86_64')
 url="https://github.com/MrOz59/gamescope"
 license=('BSD-2-Clause')
+options=('!debug')
 depends=(
   'gcc-libs' 'glibc' 'glm' 'hwdata' 'libavif' 'libcap' 'libdecor' 'libdrm'
   'libei' 'libinput' 'libpipewire' 'libx11' 'libxcb' 'libxcomposite'
@@ -26,50 +27,25 @@ depends=(
 )
 makedepends=('cmake' 'git' 'glslang' 'meson' 'ninja' 'vulkan-headers' 'wayland-protocols')
 
-_prefix=/usr/lib/hermes-gamescope
-
 _srcroot() {
   realpath "${startdir}/../.."
 }
 
 pkgver() {
-  cd "$(_srcroot)"
-  local base
-  base=$(sed -n "s/^ *version *: *'\([0-9.]*\)'.*/\1/p" meson.build | head -n1)
-  # The fork follows upstream master, whose meson.build carries no version;
-  # fall back to the newest upstream tag reachable, then to a plain count.
-  [ -n "$base" ] || base=$(git describe --tags --abbrev=0 2>/dev/null | tr -d '-' || true)
-  [ -n "$base" ] || base=0
-  printf '%s.r%s.g%s' "$base" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  "${startdir}/version.sh"
 }
 
 prepare() {
   cd "$(_srcroot)"
-  # wlroots, libliftoff, vkroots and libdisplay-info build from the pinned
-  # submodules, so the package does not follow the system's wlroots.
   git submodule update --init --recursive \
     subprojects/wlroots subprojects/libliftoff subprojects/vkroots \
     subprojects/libdisplay-info src/reshade thirdparty/SPIRV-Headers
 }
 
 build() {
-  cd "$(_srcroot)"
-  rm -rf "${srcdir}/build"
-  meson setup "${srcdir}/build" . \
-    --prefix="${_prefix}" \
-    --libdir=lib \
-    --buildtype=plain \
-    -Db_pie=true \
-    -Dforce_fallback_for=libliftoff,vkroots,wlroots,libdisplay-info \
-    -Dpipewire=enabled \
-    -Denable_openvr_support=false \
-    -Denable_tests=false \
-    -Dbenchmark=disabled
-  meson compile -C "${srcdir}/build"
+  "${startdir}/build.sh" compile "${srcdir}/build"
 }
 
 package() {
-  cd "$(_srcroot)"
-  meson install -C "${srcdir}/build" --destdir "${pkgdir}" --skip-subprojects
-  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  "${startdir}/build.sh" install "${srcdir}/build" "${pkgdir}"
 }

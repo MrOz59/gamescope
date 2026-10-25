@@ -11,8 +11,29 @@ concurrency:
   group: hermes-package
   cancel-in-progress: true
 
+# Packages follow Hermes' own: one per distribution release, each built in that
+# release's plain container so it links only what the release ships, with
+# dependencies derived from what the binaries link. Everything installs under
+# /usr/lib/hermes-gamescope (see packaging/hermes/build.sh).
+env:
+  # Gamescope needs newer Vulkan headers than Ubuntu ships. They are only
+  # headers - the loader the package links is the release's own.
+  VULKAN_HEADERS_TAG: v1.4.366
+
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - id: version
+        run: echo "version=$(packaging/hermes/version.sh)" >> "$GITHUB_OUTPUT"
+
   arch:
+    needs: version
     runs-on: ubuntu-latest
     container: archlinux:base-devel
     steps:
@@ -20,7 +41,7 @@ jobs:
         run: |
           pacman-key --init
           pacman -Syu --noconfirm
-          pacman -S --noconfirm --needed git github-cli
+          pacman -S --noconfirm --needed git
           useradd -m builder
           echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
       - uses: actions/checkout@v6
@@ -29,24 +50,156 @@ jobs:
           submodules: recursive
       - name: Build the package
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory '*'
           chown -R builder: "$GITHUB_WORKSPACE"
           cd packaging/hermes
           sudo -u builder git config --global --add safe.directory '*'
           sudo -u builder makepkg -s --noconfirm
-          ls -l ./*.pkg.tar.zst
+          mkdir -p "$GITHUB_WORKSPACE/out"
+          cp ./*.pkg.tar.zst "$GITHUB_WORKSPACE/out/"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-hermes-arch
+          path: out/*.pkg.tar.zst
+          if-no-files-found: error
+
+  deb:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: [ "24.04", "26.04" ]
+    container: ubuntu:${{ matrix.ubuntu }}
+    env:
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates git build-essential meson ninja-build cmake pkg-config \
+            python3 glslang-tools dpkg-dev file \
+            libvulkan-dev libx11-dev libx11-xcb-dev libxmu-dev libxcomposite-dev \
+            libxrender-dev libxres-dev libxtst-dev libxkbcommon-dev libxdamage-dev \
+            libxcursor-dev libxxf86vm-dev libxi-dev libxext-dev libxfixes-dev \
+            libxcb1-dev libxcb-composite0-dev libxcb-res0-dev libxcb-icccm4-dev \
+            libxcb-errors-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-xinput-dev \
+            libxcb-ewmh-dev libdrm-dev libinput-dev libseat-dev libudev-dev \
+            libwayland-dev wayland-protocols libpixman-1-dev libdecor-0-dev \
+            libluajit-5.1-dev libsdl2-dev libavif-dev libcap-dev libpipewire-0.3-dev \
+            libei-dev libglm-dev hwdata xwayland
+      - name: Install Vulkan headers
+        run: |
+          git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
+          cmake -S /tmp/vulkan-headers -B /tmp/vulkan-headers/build -DCMAKE_INSTALL_PREFIX=/opt/vulkan-headers
+          cmake --install /tmp/vulkan-headers/build
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build
+        run: |
+          git config --global --add safe.directory '*'
+          packaging/hermes/build.sh compile build \
+            -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include
+          packaging/hermes/build.sh install build "$PWD/stage"
+      - name: Package
+        run: |
+          mkdir -p out
+          packaging/hermes/package-deb.sh stage "${{ needs.version.outputs.version }}" "${{ matrix.ubuntu }}" out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-hermes-ubuntu${{ matrix.ubuntu }}
+          path: out/*.deb
+          if-no-files-found: error
+
+  rpm:
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: [ "43", "44" ]
+    container: fedora:${{ matrix.fedora }}
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf install -y \
+            git gcc-c++ meson ninja-build cmake pkgconf-pkg-config python3 glslang \
+            rpm-build findutils \
+            vulkan-loader-devel libX11-devel libXmu-devel libXcomposite-devel \
+            libXrender-devel libXres-devel libXtst-devel libxkbcommon-devel \
+            libXdamage-devel libXcursor-devel libXxf86vm-devel libXi-devel libXext-devel \
+            libXfixes-devel libxcb-devel xcb-util-wm-devel xcb-util-errors-devel \
+            libdrm-devel libinput-devel libseat-devel systemd-devel wayland-devel \
+            wayland-protocols-devel pixman-devel libdecor-devel luajit-devel SDL2-devel \
+            libavif-devel libcap-devel pipewire-devel libei-devel glm-devel hwdata-devel \
+            xorg-x11-server-Xwayland-devel
+      - name: Install Vulkan headers
+        run: |
+          git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
+          cmake -S /tmp/vulkan-headers -B /tmp/vulkan-headers/build -DCMAKE_INSTALL_PREFIX=/opt/vulkan-headers
+          cmake --install /tmp/vulkan-headers/build
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build
+        run: |
+          git config --global --add safe.directory '*'
+          packaging/hermes/build.sh compile build \
+            -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include
+          packaging/hermes/build.sh install build "$PWD/stage"
+      - name: Package
+        run: |
+          mkdir -p out
+          packaging/hermes/package-rpm.sh stage "${{ needs.version.outputs.version }}" out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gamescope-hermes-fc${{ matrix.fedora }}
+          path: out/*.rpm
+          if-no-files-found: error
+
+  # Each package that built replaces its own predecessor on the rolling
+  # release, so one distribution failing does not take the others' packages
+  # away.
+  publish:
+    needs: [ arch, deb, rpm ]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
       - name: Publish to the hermes-nightly release
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          cd packaging/hermes
-          gh release view hermes-nightly --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create hermes-nightly --repo "$GITHUB_REPOSITORY" --prerelease \
+          shopt -s nullglob
+          files=(artifacts/*)
+          [ "${#files[@]}" -gt 0 ] || { echo "nothing built"; exit 1; }
+          gh release view hermes-nightly --repo "$REPO" >/dev/null 2>&1 || \
+            gh release create hermes-nightly --repo "$REPO" --prerelease \
               --target "$GITHUB_SHA" --title "Gamescope for Hermes (nightly)" \
-              --notes "Rolling build of the hermes branch for Arch and CachyOS. See HERMES.md."
-          # Replace the previous package so the release holds exactly one.
-          for old in $(gh release view hermes-nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
-            gh release delete-asset hermes-nightly "$old" --repo "$GITHUB_REPOSITORY" --yes
+              --notes "Rolling build of the hermes branch for Arch/CachyOS, Ubuntu and Fedora. See HERMES.md."
+          existing=$(gh release view hermes-nightly --repo "$REPO" --json assets --jq '.assets[].name')
+          for file in "${files[@]}"; do
+            name=${file##*/}
+            case "$name" in
+              *.pkg.tar.zst) slot='\.pkg\.tar\.zst$' ;;
+              *.deb)
+                release=$(sed -n 's/.*_ubuntu\([0-9.]*\)_amd64\.deb$/\1/p' <<<"$name")
+                slot="_ubuntu${release//./\\.}_amd64\\.deb\$" ;;
+              *.rpm)
+                fedora=$(sed -n 's/.*\.\(fc[0-9]*\)\.x86_64\.rpm$/\1/p' <<<"$name")
+                slot="\\.${fedora}\\.x86_64\\.rpm\$" ;;
+              *) continue ;;
+            esac
+            for old in $(printf '%s\n' "$existing" | grep -E "$slot" || true); do
+              gh release delete-asset hermes-nightly "$old" --repo "$REPO" --yes
+            done
+            gh release upload hermes-nightly "$file" --repo "$REPO" --clobber
           done
-          gh release upload hermes-nightly ./*.pkg.tar.zst --repo "$GITHUB_REPOSITORY" --clobber
