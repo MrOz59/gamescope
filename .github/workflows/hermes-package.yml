@@ -93,7 +93,7 @@ jobs:
             libxrender-dev libxres-dev libxtst-dev libxkbcommon-dev libxdamage-dev \
             libxcursor-dev libxxf86vm-dev libxi-dev libxext-dev libxfixes-dev \
             libxcb1-dev libxcb-composite0-dev libxcb-res0-dev libxcb-icccm4-dev \
-            libxcb-errors-dev libxcb-xfixes0-dev libxcb-render0-dev libxcb-xinput-dev \
+            '?libxcb-errors-dev' libxcb-xfixes0-dev libxcb-render0-dev libxcb-xinput-dev \
             libxcb-ewmh-dev libdrm-dev libinput-dev libseat-dev libudev-dev \
             libwayland-dev wayland-protocols libpixman-1-dev libdecor-0-dev \
             libluajit-5.1-dev libsdl2-dev libavif-dev libcap-dev libpipewire-0.3-dev \
