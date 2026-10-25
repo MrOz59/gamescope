@@ -1,0 +1,52 @@
+name: Hermes package
+on:
+  push:
+    branches: [ hermes ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hermes-package
+  cancel-in-progress: true
+
+jobs:
+  arch:
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      - name: Prepare
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed git github-cli
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Build the package
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builder: "$GITHUB_WORKSPACE"
+          cd packaging/hermes
+          sudo -u builder git config --global --add safe.directory '*'
+          sudo -u builder makepkg -s --noconfirm
+          ls -l ./*.pkg.tar.zst
+      - name: Publish to the hermes-nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cd packaging/hermes
+          gh release view hermes-nightly --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create hermes-nightly --repo "$GITHUB_REPOSITORY" --prerelease \
+              --target "$GITHUB_SHA" --title "Gamescope for Hermes (nightly)" \
+              --notes "Rolling build of the hermes branch for Arch and CachyOS. See HERMES.md."
+          # Replace the previous package so the release holds exactly one.
+          for old in $(gh release view hermes-nightly --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'); do
+            gh release delete-asset hermes-nightly "$old" --repo "$GITHUB_REPOSITORY" --yes
+          done
+          gh release upload hermes-nightly ./*.pkg.tar.zst --repo "$GITHUB_REPOSITORY" --clobber
