@@ -70,7 +70,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 24.04's libwayland and pixman are older than wlroots 0.20 needs;
+          # 24.04's libwayland, libdrm and pixman are older than wlroots 0.20 needs;
           # its package carries newer ones in the private prefix.
           - ubuntu: "24.04"
             bundle_wayland: true
@@ -139,6 +139,7 @@ jobs:
           if [ "${{ matrix.bundle_wayland }}" = true ]; then
             mkdir -p stage/usr/lib/hermes-gamescope/lib
             cp -a /usr/lib/hermes-gamescope/lib/libwayland-*.so* /usr/lib/hermes-gamescope/lib/libpixman-1.so* \
+              /usr/lib/hermes-gamescope/lib/libdrm.so* \
               stage/usr/lib/hermes-gamescope/lib/
           fi
       - name: Package

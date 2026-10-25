@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build a newer Wayland stack into Gamescope's private prefix, for releases
-# whose own is older than wlroots needs (Ubuntu 24.04 ships libwayland 1.22;
-# wlroots 0.20 requires 1.24). The libraries are installed where the package
+# whose own is older than wlroots needs (Ubuntu 24.04 ships libwayland 1.22
+# and libdrm 2.4.125; wlroots 0.20 requires 1.24 and 2.4.129). The libraries are installed where the package
 # puts them, and Gamescope is linked with a DT_RPATH to that directory, which
 # the loader also honours for the libraries Gamescope loads (SDL2, libdecor),
 # so the whole process uses one libwayland. libwayland is backwards
@@ -38,6 +38,12 @@ build wayland https://gitlab.freedesktop.org/wayland/wayland.git \
 build wayland-protocols https://gitlab.freedesktop.org/wayland/wayland-protocols.git \
   "$(latest_tag https://gitlab.freedesktop.org/wayland/wayland-protocols.git '^1\.[0-9]+$')" \
   -Dtests=false
+# Only the core library: the vendor ones (libdrm_amdgpu and so on) stay the
+# release's, and load against this libdrm, which is backwards compatible.
+build libdrm https://gitlab.freedesktop.org/mesa/drm.git \
+  "$(latest_tag https://gitlab.freedesktop.org/mesa/drm.git '^libdrm-2\.4\.[0-9]+$')" \
+  -Dintel=disabled -Dradeon=disabled -Damdgpu=disabled -Dnouveau=disabled -Dvmwgfx=disabled \
+  -Dman-pages=disabled -Dvalgrind=disabled -Dcairo-tests=disabled -Dtests=false
 build pixman https://gitlab.freedesktop.org/pixman/pixman.git \
   "$(latest_tag https://gitlab.freedesktop.org/pixman/pixman.git '^pixman-0\.(4[3-9]|[5-9][0-9])\.[0-9]+$')" \
   -Dtests=disabled -Ddemos=disabled -Dgtk=disabled -Dlibpng=disabled
