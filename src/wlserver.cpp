@@ -1904,6 +1904,13 @@ bool wlsession_init( void ) {
 		return false;
 	}
 
+	// seatd names every seat it brokers seat0, so a session on any other seat -
+	// a compositor scanning out on a display-only device on a seat of its own -
+	// would point libinput at seat0's devices: the input of whoever sits at
+	// the machine. The session manager says which seat this is in XDG_SEAT.
+	if ( const char *pszSeat = getenv( "XDG_SEAT" ); pszSeat && *pszSeat )
+		snprintf( wlserver.wlr.session->seat, sizeof( wlserver.wlr.session->seat ), "%s", pszSeat );
+
 	wlserver.session_active.notify = handle_session_active;
 	wl_signal_add( &wlserver.wlr.session->events.active, &wlserver.session_active );
 #endif
