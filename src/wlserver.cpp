@@ -3396,6 +3396,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 			double sx = tx, sy = ty;
 			wlserver_drag_anchor_apply( sx, sy );
 			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, sx, sy );
+			wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 
 			if ( bAlwaysWarpCursor )
 				wlserver_mousewarp( tx, ty, time, false );
@@ -3447,6 +3448,7 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 			double sx = tx, sy = ty;
 			wlserver_drag_anchor_apply( sx, sy );
 			wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id, sx, sy );
+			wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 
 			wlserver.touch_down_ids.insert( touch_id );
 		}
@@ -3508,6 +3510,7 @@ void wlserver_touchup( int touch_id, uint32_t time )
 	if ( wlserver.touch_down_ids.count( touch_id ) > 0 )
 	{
 		wlr_seat_touch_notify_up( wlserver.wlr.seat, time, touch_id );
+		wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 		wlserver.touch_down_ids.erase( touch_id );
 	}
 
