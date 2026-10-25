@@ -14,6 +14,10 @@ set -euo pipefail
 prefix=${1:?prefix}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
+# Each piece builds against the ones before it: wayland-protocols needs the
+# new wayland-scanner, and wlroots later needs all three.
+export PKG_CONFIG_PATH="${prefix}/lib/pkgconfig:${prefix}/share/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+export PATH="${prefix}/bin:${PATH}"
 
 latest_tag() {
   git ls-remote --tags --refs "$1" | sed 's|.*refs/tags/||' | grep -E "$2" | sort -V | tail -n1
@@ -23,7 +27,7 @@ build() {
   local name=$1 url=$2 tag=$3
   shift 3
   echo "Building ${name} ${tag}" >&2
-  git clone -q --depth 1 --branch "$tag" "$url" "$work/$name" >&2
+  git -c advice.detachedHead=false clone -q --depth 1 --branch "$tag" "$url" "$work/$name" >&2
   meson setup "$work/$name/build" "$work/$name" --prefix="$prefix" --libdir=lib --buildtype=release "$@" >&2
   ninja -C "$work/$name/build" install >&2
 }

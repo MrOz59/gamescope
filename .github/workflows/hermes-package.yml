@@ -79,6 +79,10 @@ jobs:
     container: ubuntu:${{ matrix.ubuntu }}
     env:
       DEBIAN_FRONTEND: noninteractive
+    # Steps in a container run under sh unless told otherwise.
+    defaults:
+      run:
+        shell: bash
     steps:
       # git first: the checkout needs it, and the dependency helper lives in
       # the tree.
@@ -103,7 +107,7 @@ jobs:
             libxcb-ewmh-dev libdrm-dev libinput-dev libseat-dev libudev-dev \
             libwayland-dev wayland-protocols libpixman-1-dev libdecor-0-dev \
             libluajit-5.1-dev libsdl2-dev libavif-dev libcap-dev libpipewire-0.3-dev \
-            libei-dev libglm-dev hwdata xwayland
+            libei-dev libglm-dev hwdata xwayland libexpat1-dev libffi-dev
       - name: Install Vulkan headers
         run: |
           git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
