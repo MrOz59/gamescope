@@ -24,8 +24,11 @@ release:
 | Distribution | Asset | Installs |
 |:-------------|:------|:---------|
 | Arch / CachyOS | `gamescope-hermes-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./gamescope-hermes-*.pkg.tar.zst` |
-| Ubuntu 24.04, 26.04 | `gamescope-hermes_<version>_ubuntu<release>_amd64.deb` | `sudo apt install ./gamescope-hermes_*.deb` |
+| Ubuntu 26.04 | `gamescope-hermes_<version>_ubuntu<release>_amd64.deb` | `sudo apt install ./gamescope-hermes_*.deb` |
 | Fedora 43, 44 | `gamescope-hermes-<version>-1.fc<release>.x86_64.rpm` | `sudo dnf install ./gamescope-hermes-*.rpm` |
+
+There is no Ubuntu 24.04 package: the wlroots Gamescope builds from its
+submodule needs newer libwayland, libdrm and libxkbcommon than 24.04 ships.
 
 To build the Arch package yourself:
 

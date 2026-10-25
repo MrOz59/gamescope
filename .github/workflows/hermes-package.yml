@@ -69,13 +69,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # 24.04's libwayland, libdrm and pixman are older than wlroots 0.20 needs;
-          # its package carries newer ones in the private prefix.
-          - ubuntu: "24.04"
-            bundle_wayland: true
-          - ubuntu: "26.04"
-            bundle_wayland: false
+        # Not 24.04: Gamescope's wlroots needs newer libwayland, libdrm and
+        # libxkbcommon than it ships.
+        ubuntu: [ "26.04" ]
     container: ubuntu:${{ matrix.ubuntu }}
     env:
       DEBIAN_FRONTEND: noninteractive
@@ -107,41 +103,18 @@ jobs:
             libxcb-ewmh-dev libdrm-dev libinput-dev libseat-dev libudev-dev \
             libwayland-dev wayland-protocols libpixman-1-dev libdecor-0-dev \
             libluajit-5.1-dev libsdl2-dev libavif-dev libcap-dev libpipewire-0.3-dev \
-            libei-dev libglm-dev hwdata xwayland libexpat1-dev libffi-dev
+            libei-dev libglm-dev hwdata xwayland
       - name: Install Vulkan headers
         run: |
           git clone --depth 1 --branch "$VULKAN_HEADERS_TAG" https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vulkan-headers
           cmake -S /tmp/vulkan-headers -B /tmp/vulkan-headers/build -DCMAKE_INSTALL_PREFIX=/opt/vulkan-headers
           cmake --install /tmp/vulkan-headers/build
-      - name: Build a newer Wayland stack into the private prefix
-        if: ${{ matrix.bundle_wayland }}
-        run: |
-          prefix=/usr/lib/hermes-gamescope
-          # The script prints Gamescope's extra meson options on stdout and
-          # its build log on stderr, which ci-step.sh reports on failure.
-          packaging/hermes/ci-step.sh "Wayland stack" \
-            bash -c 'packaging/hermes/bundle-wayland.sh "$1" > /tmp/wayland-meson-args' _ "$prefix"
-          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig:$prefix/share/pkgconfig" >> "$GITHUB_ENV"
-          echo "$prefix/bin" >> "$GITHUB_PATH"
       - name: Build
         run: |
           git config --global --add safe.directory '*'
-          extra=()
-          if [ "${{ matrix.bundle_wayland }}" = true ]; then
-            mapfile -t extra < /tmp/wayland-meson-args
-            # The WSI layer is loaded into games, next to whatever libwayland
-            # the game already has; leave it out rather than bring a second.
-            extra+=(-Denable_gamescope_wsi_layer=false)
-          fi
           packaging/hermes/ci-step.sh "Build" packaging/hermes/build.sh compile build \
-            -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include "${extra[@]}"
+            -Dc_args=-I/opt/vulkan-headers/include -Dcpp_args=-I/opt/vulkan-headers/include
           packaging/hermes/ci-step.sh "Install" packaging/hermes/build.sh install build "$PWD/stage"
-          if [ "${{ matrix.bundle_wayland }}" = true ]; then
-            mkdir -p stage/usr/lib/hermes-gamescope/lib
-            cp -a /usr/lib/hermes-gamescope/lib/libwayland-*.so* /usr/lib/hermes-gamescope/lib/libpixman-1.so* \
-              /usr/lib/hermes-gamescope/lib/libdrm.so* \
-              stage/usr/lib/hermes-gamescope/lib/
-          fi
       - name: Package
         run: |
           mkdir -p out
