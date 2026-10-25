@@ -235,7 +235,7 @@ jobs:
             apt) apt-get install -y --no-install-recommends ./artifacts/*.deb ;;
             dnf) dnf install -y artifacts/*.rpm ;;
           esac
-          packaging/hermes/check-installed.sh
+          packaging/hermes/check-installed.sh artifacts/*
       - uses: actions/upload-artifact@v4
         with:
           name: validated-${{ matrix.artifact }}

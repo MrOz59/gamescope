@@ -44,6 +44,8 @@ case "$action" in
     ln -sfn ../lib/hermes-gamescope/bin/gamescope "$dest/usr/bin/gamescope-hermes"
     install -Dm644 "$root/LICENSE" "$dest/usr/share/licenses/gamescope-hermes/LICENSE"
     install -Dm644 "$root/HERMES.md" "$dest/usr/share/doc/gamescope-hermes/HERMES.md"
+    test -s "$dest/usr/share/doc/gamescope-hermes/HERMES.md"
+    test -s "$dest/usr/share/licenses/gamescope-hermes/LICENSE"
     ;;
   *)
     echo "usage: build.sh compile|install <build-dir> ..." >&2
