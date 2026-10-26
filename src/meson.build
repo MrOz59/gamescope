@@ -99,6 +99,7 @@ required_wlroots_features = ['xwayland']
 
 src = [
   'Backends/HeadlessBackend.cpp',
+  'Backends/HermesBackend.cpp',
   'Backends/WaylandBackend.cpp',
   'Utils/DirHelpers.cpp',
   'Utils/TempFiles.cpp',

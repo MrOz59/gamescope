@@ -80,6 +80,9 @@ const struct option *gamescope_options = (struct option[]){
 
 	{ "backend", required_argument, nullptr, 0 },
 
+	// hermes backend options
+	{ "hermes-socket", required_argument, nullptr, 0 },
+
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
 	{ "borderless", no_argument, nullptr, 'b' },
@@ -197,6 +200,7 @@ const char usage[] =
 #endif
 	"                                     headless => use headless backend (no window, no DRM output)\n"
 	"                                     wayland => use Wayland backend\n"
+	"                                     hermes => stream to a Hermes client over a socket (no window, no DRM output)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
@@ -233,6 +237,10 @@ const char usage[] =
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
 	"  --display-index                forces gamescope to use a specific display in nested mode."
+	"\n"
+	"Hermes backend options:\n"
+	"  --hermes-socket                path of the socket a Hermes client connects to\n"
+	"                                 default: $GAMESCOPE_HERMES_SOCKET, else $XDG_RUNTIME_DIR/gamescope-hermes-<pid>\n"
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
@@ -440,6 +448,8 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 		return gamescope::GamescopeBackend::Headless;
 	} else if (strcmp(str, "wayland") == 0) {
 		return gamescope::GamescopeBackend::Wayland;
+	} else if (strcmp(str, "hermes") == 0) {
+		return gamescope::GamescopeBackend::Hermes;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --backend\n" );
 		exit(1);
@@ -847,6 +857,8 @@ int main(int argc, char **argv)
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "backend") == 0) {
 					eCurrentBackend = parse_backend_name( optarg );
+				} else if (strcmp(opt_name, "hermes-socket") == 0) {
+					g_pszHermesSocketPath = optarg;
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = parse_integer(optarg, opt_name);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
@@ -1013,6 +1025,10 @@ int main(int argc, char **argv)
 #endif
 		case gamescope::GamescopeBackend::Headless:
 			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+
+		case gamescope::GamescopeBackend::Hermes:
+			gamescope::IBackend::Set<gamescope::CHermesBackend>();
 			break;
 
 		case gamescope::GamescopeBackend::Wayland:

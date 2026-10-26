@@ -11,6 +11,7 @@ namespace gamescope
         OpenVR,
         Headless,
         Wayland,
+        Hermes,
     };
 
     // Backend forward declarations.
@@ -19,6 +20,7 @@ namespace gamescope
     class COpenVRBackend;
     class CHeadlessBackend;
     class CWaylandBackend;
+    class CHermesBackend;
 
     // Pre-flight validation for --prefer-drm. Returns true when --prefer-drm is
     // unset or resolves to a valid DRM primary node; logs an error and returns
