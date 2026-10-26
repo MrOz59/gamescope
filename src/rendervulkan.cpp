@@ -1350,6 +1350,13 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 		ulSignalPoints.push_back( dep.ulPoint );
 	}
 
+	// Binary semaphores ignore their entry in the value array.
+	for ( VkSemaphore pSemaphore : cmdBuffer->GetBinarySignals() )
+	{
+		pSignalSemaphores.push_back( pSemaphore );
+		ulSignalPoints.push_back( 0 );
+	}
+
 	for ( auto &dep : cmdBuffer->GetExternalDependencies() )
 	{
 		pWaitSemaphores.push_back( dep.pTimelineSemaphore->pVkSemaphore );
@@ -1556,6 +1563,11 @@ void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTi
 	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
 }
 
+void CVulkanCmdBuffer::AddBinarySignal( VkSemaphore pSemaphore )
+{
+	m_BinarySignals.push_back( pSemaphore );
+}
+
 void CVulkanCmdBuffer::AddReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
 {
 	m_releasePoints.emplace_back( std::move( pReleasePoint ) );
@@ -1621,6 +1633,7 @@ void CVulkanCmdBuffer::reset()
 
 	m_ExternalDependencies.clear();
 	m_ExternalSignals.clear();
+	m_BinarySignals.clear();
 }
 
 void CVulkanCmdBuffer::begin()
@@ -2066,6 +2079,11 @@ static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
 	return true;
 }
 
+static bool isYcbcrFormat( VkFormat format )
+{
+	return format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM;
+}
+
 static VkResult getModifierProps( const VkImageCreateInfo *imageInfo, uint64_t modifier, VkExternalImageFormatProperties *externalFormatProps)
 {
 	VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierFormatInfo = {
@@ -2216,6 +2234,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
 	}
 
+	// Storage writes to a multi-planar image go through per-plane views, which
+	// need a mutable format and usage the multi-planar format itself lacks.
+	const bool bStrictPlaneStorage = flags.bStrictExport && flags.bStorage && isYcbcrFormat( imageInfo.format );
+	if ( bStrictPlaneStorage )
+		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+
 	if ( pDMA != nullptr )
 	{
 		assert( drmFormat == pDMA->format );
@@ -2261,8 +2285,11 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	}
 
 	std::vector<uint64_t> modifiers = {};
+	// An exporter that knows which modifiers its importer takes passes them in.
+	const bool bExplicitExportModifiers = flags.bExportable && flags.uExportModifierCount != 0 && flags.pExportModifiers != nullptr &&
+		g_device.supportsModifiers() && !pDMA;
 	// TODO(JoshA): Move this code to backend for making flippable image.
-	if ( GetBackend()->UsesModifiers() && flags.bFlippable && g_device.supportsModifiers() && !pDMA )
+	if ( ( GetBackend()->UsesModifiers() && flags.bFlippable && g_device.supportsModifiers() && !pDMA ) || bExplicitExportModifiers )
 	{
 		assert( drmFormat != DRM_FORMAT_INVALID );
 
@@ -2270,7 +2297,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 		const uint64_t *possibleModifiers;
 		size_t numPossibleModifiers;
-		if ( flags.bLinear )
+		if ( bExplicitExportModifiers )
+		{
+			possibleModifiers = flags.pExportModifiers;
+			numPossibleModifiers = flags.uExportModifierCount;
+		}
+		else if ( flags.bLinear )
 		{
 			possibleModifiers = &linear;
 			numPossibleModifiers = 1;
@@ -2319,6 +2351,12 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 				return false;
 		}
 
+		if ( modifiers.empty() && bExplicitExportModifiers )
+		{
+			vk_log.errorf( "None of the %u requested modifiers can export format 0x%x", flags.uExportModifierCount, drmFormat );
+			return false;
+		}
+
 		assert( modifiers.size() > 0 );
 
 		modifierListInfo = {
@@ -2363,6 +2401,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	
 	if ( pDMA != nullptr )
 	{
+		externalImageCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
+			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+		};
+	}
+	else if ( flags.bStrictExport && flags.bExportable && externalImageCreateInfo.sType == 0 )
+	{
+		// The modifier path above already chained this.
 		externalImageCreateInfo = {
 			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
 			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
@@ -2605,8 +2652,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		}
 		else
 		{
+			// A multi-planar image has no colour aspect layout, only per-plane ones.
 			const VkImageSubresource subresource = {
-				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.aspectMask = ( flags.bStrictExport && isYcbcrFormat( m_format ) ) ? VK_IMAGE_ASPECT_PLANE_0_BIT : VK_IMAGE_ASPECT_COLOR_BIT,
 			};
 			VkSubresourceLayout subresourceLayout = {};
 			g_device.vk.GetImageSubresourceLayout( g_device.device(), m_vkImage, &subresource, &subresourceLayout );
@@ -2653,10 +2701,15 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			},
 		};
 
-		res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
-		if ( res != VK_SUCCESS ) {
-			vk_errorf( res, "vkCreateImageView failed" );
-			return false;
+		// A multi-planar storage target is only written through its plane views,
+		// and its own format cannot back a storage view.
+		if ( !bStrictPlaneStorage )
+		{
+			res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_srgbView);
+			if ( res != VK_SUCCESS ) {
+				vk_errorf( res, "vkCreateImageView failed" );
+				return false;
+			}
 		}
 
 		if ( flags.bSampled )
@@ -4425,7 +4478,7 @@ namespace
 
 ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer, VkSemaphore pSignalSemaphore )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
@@ -4697,6 +4750,9 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		CompositeTimingEnd( cmdBuffer.get(), *oTimingSlot, pszKey, pszKeyPre, pszKeyPost );
 	}
 
+	if ( pSignalSemaphore != VK_NULL_HANDLE )
+		cmdBuffer->AddBinarySignal( pSignalSemaphore );
+
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 	if ( oTimingSlot )
 		g_CompositeTiming.pending.back().ulSeqNo = sequence;
@@ -4960,4 +5016,221 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	g_device.vk.FreeMemory(g_device.device(), bufferMemory, nullptr);
 
 	return pTex;
+}
+
+/////////////////////////////////////////////
+// Export helpers (used by the Hermes backend)
+/////////////////////////////////////////////
+
+std::vector<uint64_t> vulkan_get_exportable_modifiers( uint32_t uDrmFormat, VkImageUsageFlags eUsage, std::span<const uint64_t> pCandidates )
+{
+	std::vector<uint64_t> result;
+	if ( !g_device.supportsModifiers() )
+		return result;
+
+	const VkFormat eFormat = DRMFormatToVulkan( uDrmFormat, false );
+	if ( eFormat == VK_FORMAT_UNDEFINED )
+		return result;
+
+	auto formatIter = DRMModifierProps.find( eFormat );
+	if ( formatIter == DRMModifierProps.end() )
+		return result;
+
+	// Describe the image CVulkanTexture::BInit will create, so the answer holds for it.
+	std::array<VkFormat, 2> formats = {
+		eFormat,
+		DRMFormatToVulkan( uDrmFormat, true ),
+	};
+
+	VkImageFormatListCreateInfo formatList = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+		.viewFormatCount = (uint32_t)formats.size(),
+		.pViewFormats = formats.data(),
+	};
+
+	VkImageCreateInfo imageInfo = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+		.imageType = VK_IMAGE_TYPE_2D,
+		.format = eFormat,
+		.extent = { 1, 1, 1 },
+		.mipLevels = 1,
+		.arrayLayers = 1,
+		.samples = VK_SAMPLE_COUNT_1_BIT,
+		.tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+		.usage = eUsage,
+		.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+	};
+
+	if ( formats[0] != formats[1] )
+	{
+		imageInfo.pNext = &formatList;
+		imageInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+	}
+
+	for ( uint64_t ulModifier : pCandidates )
+	{
+		if ( ulModifier == DRM_FORMAT_MOD_INVALID )
+			continue;
+
+		if ( gamescope::Algorithm::Contains( result, ulModifier ) )
+			continue;
+
+		// BInit takes the plane count of the export from this table.
+		if ( !formatIter->second.count( ulModifier ) )
+			continue;
+
+		VkExternalImageFormatProperties externalProps = {
+			.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+		};
+		if ( getModifierProps( &imageInfo, ulModifier, &externalProps ) != VK_SUCCESS )
+			continue;
+
+		if ( !( externalProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT ) )
+			continue;
+
+		result.push_back( ulModifier );
+	}
+
+	return result;
+}
+
+bool vulkan_supports_linear_export( uint32_t uDrmFormat, VkImageUsageFlags eUsage )
+{
+	const VkFormat eFormat = DRMFormatToVulkan( uDrmFormat, false );
+	if ( eFormat == VK_FORMAT_UNDEFINED )
+		return false;
+
+	VkImageCreateFlags eFlags = 0;
+	if ( isYcbcrFormat( eFormat ) && ( eUsage & VK_IMAGE_USAGE_STORAGE_BIT ) )
+		eFlags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT | VK_IMAGE_CREATE_EXTENDED_USAGE_BIT;
+
+	VkPhysicalDeviceExternalImageFormatInfo externalInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO,
+		.handleType = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+	};
+
+	VkPhysicalDeviceImageFormatInfo2 formatInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+		.pNext = &externalInfo,
+		.format = eFormat,
+		.type = VK_IMAGE_TYPE_2D,
+		.tiling = VK_IMAGE_TILING_LINEAR,
+		.usage = eUsage,
+		.flags = eFlags,
+	};
+
+	VkExternalImageFormatProperties externalProps = {
+		.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
+	};
+
+	VkImageFormatProperties2 props = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+		.pNext = &externalProps,
+	};
+
+	if ( g_device.vk.GetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &formatInfo, &props ) != VK_SUCCESS )
+		return false;
+
+	return !!( externalProps.externalMemoryProperties.externalMemoryFeatures & VK_EXTERNAL_MEMORY_FEATURE_EXPORTABLE_BIT );
+}
+
+bool vulkan_get_plane_layouts( CVulkanTexture *pTexture, uint32_t *puPlaneCount, uint32_t uOffsets[4], uint32_t uStrides[4] )
+{
+	if ( !pTexture )
+		return false;
+
+	if ( !pTexture->isYcbcr() )
+	{
+		const wlr_dmabuf_attributes &dmabuf = pTexture->dmabuf();
+		if ( dmabuf.n_planes <= 0 || dmabuf.n_planes > 4 )
+			return false;
+
+		*puPlaneCount = uint32_t( dmabuf.n_planes );
+		for ( int i = 0; i < dmabuf.n_planes; i++ )
+		{
+			uOffsets[i] = dmabuf.offset[i];
+			uStrides[i] = dmabuf.stride[i];
+		}
+		return true;
+	}
+
+	// Linear multi-planar images report each plane through its own aspect.
+	static constexpr VkImageAspectFlagBits k_eAspects[] =
+	{
+		VK_IMAGE_ASPECT_PLANE_0_BIT,
+		VK_IMAGE_ASPECT_PLANE_1_BIT,
+	};
+
+	for ( uint32_t i = 0; i < std::size( k_eAspects ); i++ )
+	{
+		const VkImageSubresource subresource = {
+			.aspectMask = k_eAspects[i],
+		};
+		VkSubresourceLayout layout = {};
+		g_device.vk.GetImageSubresourceLayout( g_device.device(), pTexture->vkImage(), &subresource, &layout );
+		uOffsets[i] = uint32_t( layout.offset );
+		uStrides[i] = uint32_t( layout.rowPitch );
+	}
+	*puPlaneCount = uint32_t( std::size( k_eAspects ) );
+	return true;
+}
+
+VkSemaphore vulkan_create_sync_file_semaphore()
+{
+	VkPhysicalDeviceExternalSemaphoreInfo semaphoreInfo = {
+		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_SEMAPHORE_INFO,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+	};
+	VkExternalSemaphoreProperties semaphoreProps = {
+		.sType = VK_STRUCTURE_TYPE_EXTERNAL_SEMAPHORE_PROPERTIES,
+	};
+	g_device.vk.GetPhysicalDeviceExternalSemaphoreProperties( g_device.physDev(), &semaphoreInfo, &semaphoreProps );
+	if ( !( semaphoreProps.externalSemaphoreFeatures & VK_EXTERNAL_SEMAPHORE_FEATURE_EXPORTABLE_BIT ) )
+		return VK_NULL_HANDLE;
+
+	VkExportSemaphoreCreateInfo exportInfo = {
+		.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+		.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+	};
+	VkSemaphoreCreateInfo createInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		.pNext = &exportInfo,
+	};
+
+	VkSemaphore pSemaphore = VK_NULL_HANDLE;
+	VkResult res = g_device.vk.CreateSemaphore( g_device.device(), &createInfo, nullptr, &pSemaphore );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateSemaphore (sync_file export) failed" );
+		return VK_NULL_HANDLE;
+	}
+
+	return pSemaphore;
+}
+
+void vulkan_destroy_semaphore( VkSemaphore pSemaphore )
+{
+	if ( pSemaphore != VK_NULL_HANDLE )
+		g_device.vk.DestroySemaphore( g_device.device(), pSemaphore, nullptr );
+}
+
+std::optional<int> vulkan_export_sync_file( VkSemaphore pSemaphore )
+{
+	// Exporting a sync_file transfers the payload, leaving the semaphore
+	// unsignalled and ready for the next submission to signal again.
+	const VkSemaphoreGetFdInfoKHR getFdInfo = {
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+		.semaphore = pSemaphore,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_SYNC_FD_BIT,
+	};
+
+	int nFd = -1;
+	VkResult res = g_device.vk.GetSemaphoreFdKHR( g_device.device(), &getFdInfo, &nFd );
+	if ( res != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkGetSemaphoreFdKHR (sync_file) failed" );
+		return std::nullopt;
+	}
+
+	return nFd;
 }

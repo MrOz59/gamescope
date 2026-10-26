@@ -146,6 +146,7 @@ public:
 			bExportable = false;
 			bOutputImage = false;
 			bColorAttachment = false;
+			bStrictExport = false;
 			imageType = VK_IMAGE_TYPE_2D;
 		}
 
@@ -159,7 +160,17 @@ public:
 		bool bExportable : 1;
 		bool bOutputImage : 1;
 		bool bColorAttachment : 1;
+		// Create an exportable image the way the spec asks for one that another
+		// process imports: external memory info on the image, and mutable,
+		// extended-usage planes for multi-planar storage targets. Older callers
+		// keep the setup they were tested with.
+		bool bStrictExport : 1;
 		VkImageType imageType;
+
+		// With bExportable, allocate with one of these DRM modifiers (in order of
+		// preference) instead of the backend's scanout modifiers.
+		const uint64_t *pExportModifiers = nullptr;
+		uint32_t uExportModifierCount = 0;
 	};
 
 	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, CVulkanTexture *pExistingImageToReuseMemory = nullptr, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = nullptr );
@@ -468,7 +479,8 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr );
+// pSignalSemaphore, when given, is a binary semaphore the composite submission signals (see vulkan_export_sync_file).
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr, VkSemaphore pSignalSemaphore = VK_NULL_HANDLE );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
@@ -493,6 +505,24 @@ void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamesc
 gamescope::Rc<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
 std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture );
+
+// Export helpers for handing composited images to another process.
+
+// The subset of pCandidates, in their order, that an exportable dma-buf image
+// of uDrmFormat with eUsage can be allocated with. Empty without modifier support.
+std::vector<uint64_t> vulkan_get_exportable_modifiers( uint32_t uDrmFormat, VkImageUsageFlags eUsage, std::span<const uint64_t> pCandidates );
+// Whether an exportable dma-buf image of uDrmFormat with eUsage can use plain linear tiling.
+bool vulkan_supports_linear_export( uint32_t uDrmFormat, VkImageUsageFlags eUsage );
+// Plane layout of a linear multi-planar texture, as offsets/strides into its single allocation.
+bool vulkan_get_plane_layouts( CVulkanTexture *pTexture, uint32_t *puPlaneCount, uint32_t uOffsets[4], uint32_t uStrides[4] );
+
+// A binary semaphore whose payload exports as a sync_file. VK_NULL_HANDLE when unsupported.
+VkSemaphore vulkan_create_sync_file_semaphore();
+void vulkan_destroy_semaphore( VkSemaphore pSemaphore );
+// Exports the payload of a semaphore whose signal was just submitted.
+// Returns the sync_file, -1 when it has already signalled (nothing to wait for),
+// or std::nullopt on failure.
+std::optional<int> vulkan_export_sync_file( VkSemaphore pSemaphore );
 
 struct wlr_renderer *vulkan_renderer_create( void );
 
@@ -727,6 +757,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(GetPhysicalDeviceFormatProperties) \
 	VK_FUNC(GetPhysicalDeviceFormatProperties2) \
 	VK_FUNC(GetPhysicalDeviceImageFormatProperties2) \
+	VK_FUNC(GetPhysicalDeviceExternalSemaphoreProperties) \
 	VK_FUNC(GetPhysicalDeviceMemoryProperties) \
 	VK_FUNC(GetPhysicalDeviceQueueFamilyProperties) \
 	VK_FUNC(GetPhysicalDeviceProperties) \
@@ -1031,10 +1062,13 @@ public:
 
 	void AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
 	void AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	// A binary semaphore signalled by this submission. The caller owns it.
+	void AddBinarySignal( VkSemaphore pSemaphore );
 	void AddReleasePoint( std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint );
 
 	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
 	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
+	const std::vector<VkSemaphore> &GetBinarySignals() const { return m_BinarySignals; }
 
 	void AddDescriptorSet( uint32_t uIndex ) { m_usedDescriptorSets.push_back( uIndex ); }
 	const std::vector<uint32_t> &GetUsedDescriptorSets() const { return m_usedDescriptorSets; }
@@ -1063,6 +1097,7 @@ private:
 
 	std::vector<VulkanTimelinePoint_t> m_ExternalDependencies;
 	std::vector<VulkanTimelinePoint_t> m_ExternalSignals;
+	std::vector<VkSemaphore> m_BinarySignals;
 
 	uint32_t m_renderBufferOffset = 0;
 };
