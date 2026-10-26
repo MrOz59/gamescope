@@ -11,6 +11,7 @@ host's desktop stays in use.
 | `--prefer-drm` / `GAMESCOPE_PREFER_DRM` ([#2220](https://github.com/ValveSoftware/gamescope/pull/2220), by relil) | Scan out on the session's Hermes-KMS card while rendering on the real GPU. Upstream opens the GPU it renders with, which is the host's display. |
 | libinput seat from `XDG_SEAT` (from d3adb5, [Hermes#57](https://github.com/MrOz59/Hermes/issues/57)) | seatd names every seat `seat0`, so without it the session reads the host's keyboard and mouse. |
 | `wl_touch.frame` after passthrough touch (from d3adb5) | KWin and Qt apply touch only on the frame event, so taps never ended. |
+| `--backend hermes` (this fork) | Streams composited frames as dma-bufs to one Hermes client over a socket and takes its input, with no KMS card, seat, libinput or uinput. See [Stream backend](#stream-backend---backend-hermes). |
 
 ## Install
 
@@ -88,6 +89,71 @@ filename, since a rolling release can contain packages from different runs.
 These checks need no GPU. Real-session validation must still cover KMS scanout,
 input isolation, client touch, Vulkan driver behavior, sustained streaming and
 any HDR path claimed by the consuming Hermes configuration.
+
+## Stream backend (`--backend hermes`)
+
+The KMS path above makes every session look like a monitor: a Hermes-KMS card,
+a private seatd broker and seat-tagged input devices, all so that Gamescope can
+scan out a frame that Hermes then captures again. `--backend hermes` skips that.
+Gamescope composites each frame straight into a buffer Hermes owns and reads
+input from the same connection:
+
+```sh
+gamescope --backend hermes --hermes-socket "$XDG_RUNTIME_DIR/hermes-1.sock" \
+    -W 1920 -H 1080 -r 60 -- %command%
+```
+
+- **No session resources.** It opens no DRM primary node, no libseat session,
+  no libinput context and no uinput device. Like `--backend headless`, it only
+  needs a Vulkan device (`--prefer-vk-device` picks it). Input reaches the
+  game only through the socket, so it cannot leak to or from the host's seat.
+- **Socket.** `--hermes-socket PATH`, else `$GAMESCOPE_HERMES_SOCKET`, else
+  `$XDG_RUNTIME_DIR/gamescope-hermes-<pid>`. It is created under umask 0077
+  (only its owner can connect) and exported to children as
+  `GAMESCOPE_HERMES_SOCKET`. It serves one client at a time. A new
+  connection takes over once its `HELLO` arrives, and the keys, buttons and
+  touches the old client held are released. A connection that sends anything
+  else first is dropped, and the current stream continues.
+- **Protocol.** It is defined in [`protocol/hermes-stream-v1.h`](protocol/hermes-stream-v1.h),
+  over `AF_UNIX`/`SOCK_SEQPACKET` with fds passed by `SCM_RIGHTS`:
+  1. The client sends `HELLO`, then `CONFIGURE` with the size, refresh rate,
+     slot count and the formats and modifiers its encoder imports, best first.
+  2. Gamescope answers with `POOL` and one `BUFFER` (a dma-buf) per slot.
+  3. Each frame arrives as `FRAME` with a sync_file fence. The client owns that
+     slot until it sends `RELEASE`. When every slot is held, Gamescope skips
+     the frame and repaints on the next release, so a slow encoder does not
+     stall the game.
+  4. `CONFIGURE` may be sent again at any time to change the mode. With
+     `RESIZE_NESTED`, the game's own screen is resized as well.
+- **Formats.** NV12 (linear, BT.709 or BT.601, limited or full range) is
+  converted by Gamescope's composite pass, so a VAAPI/NVENC encoder can take it
+  without another copy. RGB formats (8-bit and 2101010) use any modifier the
+  client lists that the Vulkan driver can export, then linear, then the
+  driver's implicit layout.
+- **HDR10.** It needs the client to set the HDR flag and list a 10-bit RGB
+  format, and it needs `--hdr-enabled` (or Steam's HDR setting) on the Gamescope
+  side. Without the 10-bit format the client gets an error, and SDR frames are
+  sent instead. A frame is PQ/BT.2020 only when Gamescope actually
+  composited it that way. `FRAME` says so and carries the game's HDR metadata,
+  or defaults built from the luminance values the client reported.
+- **Reference client.** `gamescope-hermes-client` (installed next to
+  `gamescope`, libc only) connects, configures, waits on the fences, releases
+  slots and prints frame rates. It can dump a linear frame to check colours:
+
+  ```sh
+  gamescope-hermes-client -W 1280 -H 720 -f xbgr8888 -n 120 -d /tmp/frame.ppm
+  gamescope-hermes-client -f nv12 -d /tmp/frame.nv12   # Y plane, then CbCr
+  gamescope-hermes-client --hdr -f abgr2101010 -n 300
+  ```
+
+Hermes still provides what the protocol does not cover. Gamepads come through
+its own virtual HID devices, and audio through a per-session PipeWire sink.
+
+What is verified: the protocol header's layout (C and C++ static asserts), the
+reference client (`-Wall -Wextra -Werror`), and type checks of the backend and
+the Vulkan changes. Like the KMS path, real-session validation still has to
+cover each GPU driver's dma-buf export (NVIDIA in particular), encoder import,
+sustained streaming and HDR.
 
 ## Keeping up with upstream
 

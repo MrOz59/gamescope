@@ -9,7 +9,7 @@ test -x "$prefix/bin/gamescope"
 test -x "$prefix/libexec/gamescope"
 test -L /usr/bin/gamescope-hermes
 test "$(readlink -f /usr/bin/gamescope-hermes)" = "$prefix/bin/gamescope"
-for helper in gamescopereaper gamescope-type gamescopectl gamescopestream; do
+for helper in gamescopereaper gamescope-type gamescopectl gamescopestream gamescope-hermes-client; do
   test -x "$prefix/bin/$helper"
 done
 test -s "$prefix/share/gamescope/scripts/00-gamescope/common/util.lua"
@@ -56,5 +56,6 @@ if ! gamescope-hermes --help > "$work/help" 2>&1; then
   exit 1
 fi
 grep -q -- '--prefer-drm' "$work/help"
+grep -q -- '--hermes-socket' "$work/help"
 "$prefix/bin/gamescope" --version
 printf '%s\n' 'Installed package: PASS (no compositor/GPU session started)'

@@ -232,4 +232,7 @@ executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamesc
 
 executable('gamescope-type', ['Apps/gamescope_type.c'], protocols_client_src, dependencies: [dep_wayland, cap_dep], install:true )
 
+# Reference client for --backend hermes (protocol/hermes-stream-v1.h); needs nothing beyond libc.
+executable('gamescope-hermes-client', ['Apps/gamescope_hermes_client.c'], install: true )
+
 executable('gamescope_hotkey_example', ['Apps/gamescope_hotkey_example.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland, xkbcommon, cap_dep], install: false )
