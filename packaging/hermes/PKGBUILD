@@ -19,6 +19,7 @@ license=('BSD-2-Clause')
 options=('!debug')
 # Libraries are named by soname where their package provides it (makepkg pins
 # the version): pacman then refuses an update that would break the binaries.
+# gamescope-hermes.hook reports the rest after each update.
 depends=(
   'gcc-libs' 'glibc' 'hwdata' 'libavif' 'libcap.so' 'libdecor' 'libdrm'
   'libeis.so' 'libinput.so' 'liblcms2.so' 'libpipewire-0.3.so'
@@ -51,4 +52,6 @@ build() {
 
 package() {
   "${startdir}/build.sh" install "${srcdir}/build" "${pkgdir}"
+  install -Dm644 "${startdir}/gamescope-hermes.hook" -t "${pkgdir}/usr/share/libalpm/hooks/"
+  install -Dm755 "${startdir}/check-libs.sh" "${pkgdir}/usr/share/libalpm/scripts/gamescope-hermes-libs"
 }

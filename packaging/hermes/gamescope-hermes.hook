@@ -1,0 +1,11 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Operation = Remove
+Type = Path
+Target = usr/lib/*.so*
+
+[Action]
+Description = Checking gamescope-hermes's libraries...
+When = PostTransaction
+Exec = /usr/bin/sh -c 'test ! -x /usr/share/libalpm/scripts/gamescope-hermes-libs || exec /usr/share/libalpm/scripts/gamescope-hermes-libs'

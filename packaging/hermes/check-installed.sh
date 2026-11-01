@@ -45,6 +45,13 @@ for file in "$prefix/libexec/gamescope" "$prefix"/bin/* "$prefix"/lib/*.so; do
     exit 1
   fi
 done
+# The Arch package checks its linkage again after every library update.
+case "$archive" in
+  *.pkg.tar.zst)
+    test -s /usr/share/libalpm/hooks/gamescope-hermes.hook
+    /usr/share/libalpm/scripts/gamescope-hermes-libs
+    ;;
+esac
 # Vulkan is loaded through dlopen, so ELF-generated package dependencies miss it.
 ldconfig -p > "$work/loader-cache"
 grep -q 'libvulkan.so.1' "$work/loader-cache"
