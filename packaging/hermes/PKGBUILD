@@ -17,15 +17,18 @@ arch=('x86_64')
 url="https://github.com/MrOz59/gamescope"
 license=('BSD-2-Clause')
 options=('!debug')
+# Libraries are named by soname where their package provides it (makepkg pins
+# the version): pacman then refuses an update that would break the binaries.
 depends=(
-  'gcc-libs' 'glibc' 'glm' 'hwdata' 'libavif' 'libcap' 'libdecor' 'libdrm'
-  'libei' 'libinput' 'libpipewire' 'libx11' 'libxcb' 'libxcomposite'
-  'libxcursor' 'libxdamage' 'libxext' 'libxfixes' 'libxi' 'libxkbcommon'
-  'libxmu' 'libxrender' 'libxres' 'libxtst' 'libxxf86vm' 'luajit' 'pixman'
-  'sdl2' 'seatd' 'vulkan-icd-loader' 'wayland' 'xcb-util-errors'
-  'xcb-util-wm' 'xkeyboard-config' 'xorg-xwayland'
+  'gcc-libs' 'glibc' 'hwdata' 'libavif' 'libcap.so' 'libdecor' 'libdrm'
+  'libeis.so' 'libinput.so' 'liblcms2.so' 'libpipewire-0.3.so'
+  'libpixman-1.so' 'libseat.so' 'libudev.so' 'libwayland-client.so'
+  'libwayland-server.so' 'libx11' 'libxcb' 'libxcomposite' 'libxcursor'
+  'libxdamage' 'libxext' 'libxfixes' 'libxi' 'libxkbcommon.so' 'libxmu'
+  'libxrender' 'libxres' 'libxtst' 'libxxf86vm' 'luajit' 'sdl2'
+  'vulkan-icd-loader' 'xkeyboard-config' 'xorg-xwayland'
 )
-makedepends=('cmake' 'git' 'glslang' 'meson' 'ninja' 'vulkan-headers' 'wayland-protocols')
+makedepends=('cmake' 'git' 'glm' 'glslang' 'meson' 'ninja' 'vulkan-headers' 'wayland-protocols')
 
 _srcroot() {
   realpath "${startdir}/../.."
