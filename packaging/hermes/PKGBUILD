@@ -41,7 +41,7 @@ pkgver() {
 
 prepare() {
   cd "$(_srcroot)"
-  git submodule update --init --recursive \
+  git submodule update --init \
     subprojects/wlroots subprojects/libliftoff subprojects/vkroots \
     subprojects/libdisplay-info src/reshade thirdparty/SPIRV-Headers
 }
