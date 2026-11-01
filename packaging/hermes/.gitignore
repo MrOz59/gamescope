@@ -1,0 +1,4 @@
+# makepkg output
+/pkg/
+/src/
+*.pkg.tar.*
