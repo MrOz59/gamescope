@@ -58,6 +58,12 @@ cd gamescope/packaging/hermes
 makepkg -si
 ```
 
+The Arch package depends on the sonames of the libraries whose packages
+provide them, so pacman refuses an update that would remove one it links.
+For the others (libavif, libdrm, luajit, SDL, X11...) a pacman hook checks
+the installed binaries after every library change and prints a warning naming
+what is missing. Rebuild (`makepkg -fsi`) or install a newer package then.
+
 Every package is built by `packaging/hermes/build.sh`; `package-deb.sh` and
 `package-rpm.sh` turn its staged tree into a `.deb` or `.rpm`. The version is
 the upstream release the branch is based on (`packaging/hermes/VERSION`) plus
