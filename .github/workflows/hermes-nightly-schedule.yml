@@ -1,0 +1,26 @@
+name: Schedule Gamescope Hermes nightly
+
+# GitHub runs scheduled workflows from the default branch only. Dispatch the
+# real packaging pipeline on hermes, which also builds on every push.
+on:
+  schedule:
+    - cron: '17 16 * * *' # 02:17 AEST / 03:17 AEDT
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: schedule-gamescope-hermes-nightly
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the rolling nightly from hermes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run hermes-package.yml --ref hermes --repo "$GITHUB_REPOSITORY"
