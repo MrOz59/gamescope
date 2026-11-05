@@ -1,0 +1,54 @@
+name: Sync master with upstream
+
+# This workflow must live on the repository DEFAULT branch (sync-control).
+# Keep upstream's master untouched: do not add workflows or custom commits there.
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: upstream-master-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: github.repository == 'MrOz59/gamescope'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the control branch
+        uses: actions/checkout@v6
+        with:
+          ref: sync-control
+          fetch-depth: 0
+
+      - name: Mirror upstream master exactly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git remote add upstream https://github.com/ValveSoftware/gamescope.git
+          git fetch --no-tags upstream +refs/heads/master:refs/remotes/upstream/master
+          git fetch --no-tags origin +refs/heads/master:refs/remotes/origin/master
+
+          current_sha="$(git rev-parse refs/remotes/origin/master)"
+          upstream_sha="$(git rev-parse refs/remotes/upstream/master)"
+
+          echo "Fork master:     $current_sha"
+          echo "Upstream master: $upstream_sha"
+
+          if [[ "$current_sha" == "$upstream_sha" ]]; then
+            echo "Already in sync."
+            exit 0
+          fi
+
+          # Compare-and-swap: a concurrent update to master fails instead of
+          # silently overwriting a newer commit. Only master is updated.
+          git push \
+            --force-with-lease="refs/heads/master:$current_sha" \
+            origin "$upstream_sha:refs/heads/master"
+
+          echo "master now exactly matches ValveSoftware/gamescope master."
