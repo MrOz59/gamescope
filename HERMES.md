@@ -25,6 +25,15 @@ the same way Hermes' own packages are built, and keeps them on the rolling
 [`hermes-nightly`](https://github.com/MrOz59/gamescope/releases/tag/hermes-nightly)
 release:
 
+A build runs on every push to `hermes`, can be started manually, and is
+scheduled every day at **16:17 UTC** (02:17–03:17 in Sydney, depending on
+daylight saving). GitHub requires schedules on the default `master` branch,
+so a tiny dispatcher there starts this branch's packaging workflow. The
+`hermes-nightly` pre-release and tag are reused; successfully validated
+packages replace their matching distribution assets, while failures keep the
+previous known-good package. The release notes identify the latest publishing
+commit, and each filename identifies the commit it was built from.
+
 | Distribution | Asset | Installs |
 |:-------------|:------|:---------|
 | Arch / CachyOS | `gamescope-hermes-<version>-1-x86_64.pkg.tar.zst` | `sudo pacman -U ./gamescope-hermes-*.pkg.tar.zst` |

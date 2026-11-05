@@ -1,4 +1,4 @@
-name: Hermes package
+name: Hermes package / rolling nightly
 on:
   push:
     branches: [ hermes ]
@@ -280,14 +280,35 @@ jobs:
               *.pkg.tar.zst) slot='\.pkg\.tar\.zst$' ;;
               *.deb)
                 release=$(sed -n 's/.*_ubuntu\([0-9.]*\)_amd64\.deb$/\1/p' <<<"$name")
-                slot="_ubuntu${release//./\\.}_amd64\\.deb\$" ;;
+                [[ -n "$release" ]] || { echo "::error::Unknown Ubuntu package: $name"; exit 1; }
+                slot="_ubuntu${release//./\\.}_amd64\\.deb\$"
+                ;;
               *.rpm)
                 fedora=$(sed -n 's/.*\.\(fc[0-9]*\)\.x86_64\.rpm$/\1/p' <<<"$name")
-                slot="\\.${fedora}\\.x86_64\\.rpm\$" ;;
-              *) continue ;;
+                [[ -n "$fedora" ]] || { echo "::error::Unknown Fedora package: $name"; exit 1; }
+                slot="\\.${fedora}\\.x86_64\\.rpm\$"
+                ;;
+              *) echo "::error::Unknown package type: $name"; exit 1 ;;
             esac
+            # Upload first so an upload failure never removes the previous working package.
+            gh release upload hermes-nightly "$file" --repo "$REPO" --clobber
             for old in $(printf '%s\n' "$existing" | grep -E "$slot" || true); do
+              [[ "$old" == "$name" ]] && continue
               gh release delete-asset hermes-nightly "$old" --repo "$REPO" --yes
             done
-            gh release upload hermes-nightly "$file" --repo "$REPO" --clobber
           done
+          {
+            echo 'Rolling builds of the `hermes` branch for Arch/CachyOS, Ubuntu 26.04, and Fedora 43/44.'
+            echo
+            printf 'Last successful publication: `%s` (%s UTC).\n\n' "$GITHUB_SHA" "$(date -u +'%Y-%m-%d %H:%M')"
+            echo 'Each filename embeds its source revision. If a distribution fails its runtime validation, its last working package is retained until the next successful build.'
+            echo
+            echo 'See [HERMES.md](https://github.com/MrOz59/gamescope/blob/hermes/HERMES.md) for installation instructions and compatibility.'
+          } > /tmp/hermes-nightly-notes.md
+          gh release edit hermes-nightly --repo "$REPO" --prerelease \
+            --target "$GITHUB_SHA" --title "Gamescope for Hermes (rolling nightly)" \
+            --notes-file /tmp/hermes-nightly-notes.md
+          # A release edit does not move an existing Git tag. Keep its source
+          # archive and commit pointer aligned with the last published run.
+          gh api --method PATCH "repos/$REPO/git/refs/tags/hermes-nightly" \
+            -f sha="$GITHUB_SHA" -F force=true > /dev/null
