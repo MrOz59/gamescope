@@ -691,6 +691,7 @@ namespace gamescope
 							event.motion.y / float(g_nOutputHeightPts),
 							0,
 							fake_timestamp );
+						wlserver_touchframe();
 						wlserver_unlock();
 					}
 				}
@@ -719,6 +720,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchmotion( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;
@@ -727,6 +729,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchdown( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;
@@ -735,6 +738,7 @@ namespace gamescope
 				{
 					wlserver_lock();
 					wlserver_touchup( event.tfinger.fingerId, fake_timestamp );
+					wlserver_touchframe();
 					wlserver_unlock();
 				}
 				break;
@@ -746,7 +750,7 @@ namespace gamescope
 					if ( event.key.keysym.mod & KMOD_LGUI )
 					{
 						uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
+						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_T, KEY_I, KEY_O, KEY_S, KEY_G};
 						const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
 						if ( isShortcutKey )
 						{
@@ -781,6 +785,10 @@ namespace gamescope
 							case KEY_Y:
 								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
 									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+								break;
+							case KEY_T:
+								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::SGSR) ? 
+									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::SGSR;
 								break;
 							case KEY_I:
 								g_upscaleFilterSharpness = std::min(20, g_upscaleFilterSharpness + 1);

@@ -515,6 +515,11 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec, false, touch->connector );
 }
 
+static void wlserver_handle_touch_frame(struct wl_listener *listener, void *data)
+{
+	wlserver_touchframe();
+}
+
 struct wlserver_keyboard {
 	struct wlr_keyboard *wlr;
 
@@ -553,6 +558,7 @@ static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *da
 	wl_list_remove( &touch->down.link );
 	wl_list_remove( &touch->up.link );
 	wl_list_remove( &touch->motion.link );
+	wl_list_remove( &touch->frame.link );
 	wl_list_remove( &touch->destroy.link );
 	free( touch );
 }
@@ -618,6 +624,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.up, &touch->up );
 			touch->motion.notify = wlserver_handle_touch_motion;
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
+			touch->frame.notify = wlserver_handle_touch_frame;
+			wl_signal_add( &touch->wlr->events.frame, &touch->frame );
 			touch->destroy.notify = wlserver_handle_touch_destroy;
 			wl_signal_add( &device->events.destroy, &touch->destroy);
 
@@ -1229,9 +1237,6 @@ static void create_gamescope_swapchain( struct wl_client *client, struct wl_reso
 	struct wl_resource *gamescope_swapchain_resource
 		= wl_resource_create( client, &gamescope_swapchain_interface, wl_resource_get_version( resource ), id );
 	wl_resource_set_implementation( gamescope_swapchain_resource, &gamescope_swapchain_impl, wl_surface_info, gamescope_swapchain_handle_resource_destroy );
-
-	if (wl_surface_info->gamescope_swapchains.size())
-		wl_log.errorf("create_swapchain: Surface already had a gamescope_swapchain! Warning!");
 
 	s_PresentTimingRoutes.emplace( gamescope_swapchain_resource,
 		std::make_shared<gamescope::PresentTimingRoute>( gamescope::PresentTimingRoute{ .resource = gamescope_swapchain_resource, .timing_events = timing_events } ) );
@@ -3472,7 +3477,6 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 			double sx = tx, sy = ty;
 			wlserver_drag_anchor_apply( sx, sy );
 			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, sx, sy );
-			wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 
 			if ( bAlwaysWarpCursor )
 				wlserver_mousewarp( tx, ty, time, false );
@@ -3524,7 +3528,6 @@ void wlserver_touchdown( double x, double y, int touch_id, uint32_t time, gamesc
 			double sx = tx, sy = ty;
 			wlserver_drag_anchor_apply( sx, sy );
 			wlr_seat_touch_notify_down( wlserver.wlr.seat, wlserver.mouse_focus_surface, time, touch_id, sx, sy );
-			wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 
 			wlserver.touch_down_ids.insert( touch_id );
 		}
@@ -3586,12 +3589,19 @@ void wlserver_touchup( int touch_id, uint32_t time )
 	if ( wlserver.touch_down_ids.count( touch_id ) > 0 )
 	{
 		wlr_seat_touch_notify_up( wlserver.wlr.seat, time, touch_id );
-		wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 		wlserver.touch_down_ids.erase( touch_id );
 	}
 
 	wlserver_drag_anchor_release();
 	bump_input_counter();
+}
+
+// Ends a group of touch events. Clients may not act on them until this is sent.
+void wlserver_touchframe()
+{
+	assert( wlserver_is_lock_held() );
+
+	wlr_seat_touch_notify_frame( wlserver.wlr.seat );
 }
 
 gamescope_xwayland_server_t *wlserver_get_xwayland_server( size_t index )

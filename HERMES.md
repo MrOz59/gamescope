@@ -10,7 +10,6 @@ host's desktop stays in use.
 | --- | --- |
 | `--prefer-drm` / `GAMESCOPE_PREFER_DRM` ([#2220](https://github.com/ValveSoftware/gamescope/pull/2220), by relil) | Scan out on the session's Hermes-KMS card while rendering on the real GPU. Upstream opens the GPU it renders with, which is the host's display. |
 | libinput seat from `XDG_SEAT` (from d3adb5, [Hermes#57](https://github.com/MrOz59/Hermes/issues/57)) | seatd names every seat `seat0`, so without it the session reads the host's keyboard and mouse. |
-| `wl_touch.frame` after passthrough touch (from d3adb5) | KWin and Qt apply touch only on the frame event, so taps never ended. |
 
 ## Install
 
@@ -27,7 +26,7 @@ release:
 
 A build runs on every push to `hermes`, can be started manually, and is
 scheduled every day at **16:17 UTC** (02:17–03:17 in Sydney, depending on
-daylight saving). GitHub requires schedules on the default `master` branch,
+daylight saving). GitHub runs schedules on the default `sync-control` branch,
 so a tiny dispatcher there starts this branch's packaging workflow. The
 `hermes-nightly` pre-release and tag are reused; successfully validated
 packages replace their matching distribution assets, while failures keep the
@@ -106,5 +105,6 @@ any HDR path claimed by the consuming Hermes configuration.
 
 ## Keeping up with upstream
 
-Rebase `hermes` on `master`, drop a patch once upstream carries it, and bump
-`packaging/hermes/VERSION` when the base passes a new Gamescope release.
+Merge the mirrored `master` into `hermes`, drop a patch once upstream carries
+it, and bump `packaging/hermes/VERSION` when the base passes a new Gamescope
+release.

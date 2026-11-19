@@ -27,7 +27,7 @@ depends=(
   'libwayland-server.so' 'libx11' 'libxcb' 'libxcomposite' 'libxcursor'
   'libxdamage' 'libxext' 'libxfixes' 'libxi' 'libxkbcommon.so' 'libxmu'
   'libxrender' 'libxres' 'libxtst' 'libxxf86vm' 'luajit' 'sdl2'
-  'vulkan-icd-loader' 'xkeyboard-config' 'xorg-xwayland'
+  'vulkan-icd-loader' 'xcb-util-wm' 'xkeyboard-config' 'xorg-xwayland'
 )
 makedepends=('cmake' 'git' 'glm' 'glslang' 'meson' 'ninja' 'vulkan-headers' 'wayland-protocols')
 

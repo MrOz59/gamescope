@@ -1528,6 +1528,13 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 	//
 	// Thus, we must dup.
 
+	const int nSyncobjFd = dup( pTimeline->GetSyncobjFd() );
+	if ( nSyncobjFd < 0 )
+	{
+		vk_log.errorf_errno( "Failed to duplicate the timeline syncobj fd" );
+		return nullptr;
+	}
+
 	VkImportSemaphoreFdInfoKHR importFdInfo =
 	{
 		.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
@@ -1535,11 +1542,12 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 		.semaphore = pSemaphore->pVkSemaphore,
 		.flags = 0, // not temporary
 		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
-		.fd = dup( pTimeline->GetSyncobjFd() ),
+		.fd = nSyncobjFd,
 	};
 	if ( ( res = vk.ImportSemaphoreFdKHR( m_device, &importFdInfo ) ) != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkImportSemaphoreFdKHR failed" );
+		close( nSyncobjFd );
 		return nullptr;
 	}
 
