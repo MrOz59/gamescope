@@ -75,8 +75,10 @@ meson install -C build/ --skip-subprojects
 
 * **Super + F** : Toggle fullscreen
 * **Super + N** : Toggle nearest neighbour filtering
+* **Super + B** : Toggle bilinear filtering
 * **Super + U** : Toggle FSR upscaling
 * **Super + Y** : Toggle NIS upscaling
+* **Super + T** : Toggle SGSR upscaling
 * **Super + I** : Increase FSR sharpness by 1
 * **Super + O** : Decrease FSR sharpness by 1
 * **Super + S** : Take screenshot (currently goes to `/tmp/gamescope_$DATE.png`)

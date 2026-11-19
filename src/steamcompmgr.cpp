@@ -2425,13 +2425,9 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio_y;
 	}
 
-	bool bNested = GetBackend()->GetCurrentMouseConnector() && GetBackend()->GetCurrentMouseConnector()->GetNestedHints();
-	if ( !bNested )
-	{
-		// Apply the cursor offset inside the texture using the display scale
-		scaledX = scaledX - (m_hotspotX * cursor_scale);
-		scaledY = scaledY - (m_hotspotY * cursor_scale);
-	}
+	// Apply the cursor offset inside the texture using the display scale
+	scaledX = scaledX - (m_hotspotX * cursor_scale);
+	scaledY = scaledY - (m_hotspotY * cursor_scale);
 
 	FrameInfo_t::Layer_t *layer = frameInfo->layers.push();
 	if ( !layer )
@@ -5602,6 +5598,12 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		pFocus->pVirtualConnector->SetProperty( gamescope::ConnectorProperty::IsFileBrowser, pFocus->inputFocusWindow->bIsDolphin );
 	}
 
+	if ( pFocus->pVirtualConnector )
+	{
+		bool bHasNestedPopup = pFocus->overrideWindow && !pFocus->overrideUnderlayWindows.empty();
+		pFocus->pVirtualConnector->SetProperty( gamescope::ConnectorProperty::HasNestedPopup, bHasNestedPopup );
+	}
+
 	// Backchannel to Steam
 	unsigned long focusedWindow = 0;
 	unsigned long focusedAppId = 0;
@@ -5724,6 +5726,7 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		wlserver_lock();
 		wlserver_touchdown( 0.5, 0.5, 0, now );
 		wlserver_touchup( 0, now + 1 );
+		wlserver_touchframe();
 		wlserver_mousehide();
 		wlserver_unlock();
 	}
@@ -5756,10 +5759,12 @@ get_win_type(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 static void
 get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 {
-	XSizeHints hints;
-	long hintsSpecified = 0;
+	XSizeHints hints = {};
+	long hintsSupplied = 0;
 
-	XGetWMNormalHints(ctx->dpy, w->xwayland().id, &hints, &hintsSpecified);
+	// Xlib's supplied mask lists the fields the property can hold, not the ones the client set.
+	XGetWMNormalHints(ctx->dpy, w->xwayland().id, &hints, &hintsSupplied);
+	const long hintsSpecified = hints.flags;
 
 	const bool bHasPositionAndGravityHints = ( hintsSpecified & ( PPosition | PWinGravity ) ) == ( PPosition | PWinGravity );
 	if ( bHasPositionAndGravityHints &&
@@ -11072,6 +11077,9 @@ steamcompmgr_main(int argc, char **argv)
 		static int nIgnoredOverlayRepaints = 0;
 		static uint64_t s_ulLastContentPaintTime = 0;
 
+		// Taken before the position is sampled, so a move during the paint asks for the next frame.
+		const bool bCursorRepaint = hasCursorRepaint.exchange( false );
+
 		if ( !hasRepaintNonBasePlane )
 			nIgnoredOverlayRepaints = 0;
 
@@ -11172,13 +11180,13 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					case FlipType::Normal:
 					{
-						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || hasCursorRepaint || bForceSyncFlip );
+						bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bCursorRepaint || bForceSyncFlip );
 						break;
 					}
 
 					case FlipType::Async:
 					{
-						bShouldPaint = hasRepaint || hasCursorRepaint;
+						bShouldPaint = hasRepaint || bCursorRepaint;
 
 						if ( vblank && !bShouldPaint && hasRepaintNonBasePlane )
 							nIgnoredOverlayRepaints++;
@@ -11191,7 +11199,7 @@ steamcompmgr_main(int argc, char **argv)
 						bShouldPaint = hasRepaint && bVRRCanFlip;
 
 						// Content at or above adaptive_sync_cursor_min_fps carries the cursor with its own frames.
-						if ( !bShouldPaint && hasCursorRepaint && bVRRCanFlip )
+						if ( !bShouldPaint && bCursorRepaint && bVRRCanFlip )
 						{
 							const int nCursorMinFPS = cv_adaptive_sync_cursor_min_fps;
 							if ( nCursorMinFPS <= 0 ||
@@ -11206,7 +11214,7 @@ steamcompmgr_main(int argc, char **argv)
 						     cv_adaptive_sync_idle_hold )
 						{
 							bShouldPaint = true;
-							bRepeatFrame = !hasCursorRepaint && !hasRepaintNonBasePlane;
+							bRepeatFrame = !bCursorRepaint && !hasRepaintNonBasePlane;
 						}
 
 						if ( bIsVBlankFromTimer )
@@ -11270,13 +11278,16 @@ steamcompmgr_main(int argc, char **argv)
 
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
-			hasCursorRepaint = false;
 			nIgnoredOverlayRepaints = 0;
 
 			{
 				gamescope::CScriptScopedLock script;
 				script.Manager().CallHook( "OnPostPaint" );
 			}
+		}
+		else if ( bCursorRepaint )
+		{
+			hasCursorRepaint = true;
 		}
 
 		publish_mangoapp_snapshot();

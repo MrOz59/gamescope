@@ -358,12 +358,19 @@ namespace gamescope
         }
 
         bool IsTouchForbidden() const { return m_bForbidTouchMode; }
+        bool HasNestedPopup() const { return m_bHasNestedPopup; }
 
         virtual void SetProperty( ConnectorProperty eProperty, std::any value )
         {
             if ( eProperty == ConnectorProperty::IsFileBrowser )
             {
                 m_bForbidTouchMode = std::any_cast<bool>( value );
+            }
+            else if ( eProperty == ConnectorProperty::HasNestedPopup )
+            {
+                bool bHasNestedPopup = std::any_cast<bool>( value );
+                if ( m_bHasNestedPopup.exchange( bHasNestedPopup ) != bHasNestedPopup )
+                    openvr_log.debugf( "Connector %p nested popup: %s", this, bHasNestedPopup ? "open" : "closed" );
             }
         }
 
@@ -458,7 +465,9 @@ namespace gamescope
         uint32_t m_uNextCompositeImage = 0;
         bool m_bWarnedCompositeExhaustion = false;
 
-        bool m_bForbidTouchMode = false;
+        // Set on the steamcompmgr thread, read on the VR input thread.
+        std::atomic<bool> m_bForbidTouchMode = { false };
+        std::atomic<bool> m_bHasNestedPopup = { false };
     };
 
 	class COpenVRBackend final : public CBaseBackend
@@ -907,6 +916,12 @@ namespace gamescope
 
                 if ( VirtualConnectorKeyIsNonSteamWindow( pMouseConnector->GetVirtualConnectorKey() ) )
                 {
+                    // A touch on a submenu can be reported on the submenu's X window instead of the menu's grab window. Chromium only
+                    // converts the press into the grab window's coordinates, not the release, so it handles the release at the wrong spot
+                    // and the item never activates. We still use touch for single popups, so lists in them can be scrolled.
+                    if ( pMouseConnector->HasNestedPopup() )
+                        return TouchClickModes::Left;
+
                     return TouchClickModes::Passthrough;
                 }
 
@@ -1182,7 +1197,10 @@ namespace gamescope
 
             wlserver_lock();
             if ( uButton == BTN_LEFT )
+            {
                 wlserver_touchup( 0, ++m_uFakeTimestamp );
+                wlserver_touchframe();
+            }
             else
                 wlserver_mousebutton( uButton, false, ++m_uFakeTimestamp );
             wlserver_unlock();
@@ -1481,6 +1499,7 @@ namespace gamescope
                                         wlserver_touchdown(flX, flY, 0, ++m_uFakeTimestamp);
                                     else
                                         wlserver_touchup(0, ++m_uFakeTimestamp);
+                                    wlserver_touchframe();
                                 }
                                 else if (vrEvent.data.mouse.button == vr::VRMouseButton_Right)
                                 {
@@ -1539,6 +1558,7 @@ namespace gamescope
 
                 wlserver_lock();
                 wlserver_touchmotion(flTouchMoveX, flTouchMoveY, 0, ++m_uFakeTimestamp, bAlwaysMoveCursor);
+                wlserver_touchframe();
                 wlserver_unlock();
             }
         }
@@ -1742,10 +1762,11 @@ namespace gamescope
             vHotspot.v[ 1 ] = static_cast< float >( pCursorInfo->uYHotspot ) / pCursorInfo->uHeight;
             vr::VROverlay()->SetOverlayTransformCursor( m_CursorPlane.GetOverlay(), &vHotspot );
 
+            // The layer is placed by its top-left corner, add the hotspot back to get the pointer.
             vr::HmdVector2_t vMousePos =
             {
-                static_cast<float>( -pCursorLayer->offset.x ),
-                static_cast<float>( static_cast<float>( g_nOutputHeight ) + pCursorLayer->offset.y ),
+                static_cast<float>( -pCursorLayer->offset.x + pCursorInfo->uXHotspot / pCursorLayer->scale.x ),
+                static_cast<float>( static_cast<float>( g_nOutputHeight ) + pCursorLayer->offset.y - pCursorInfo->uYHotspot / pCursorLayer->scale.y ),
             };
 
             FrameInfo_t::Layer_t textureLayer = *pCursorLayer;
