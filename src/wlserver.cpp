@@ -61,6 +61,7 @@
 #include "hdmi.h"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
+#include "backend.h"
 #include "color_helpers.h"
 #include "log.hpp"
 #include "ime.hpp"
@@ -506,6 +507,15 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 	wlserver_touchup( event->touch_id, event->time_msec );
 }
 
+static void wlserver_handle_touch_cancel(struct wl_listener *listener, void *data)
+{
+	struct wlserver_touch *touch = wl_container_of( listener, touch, cancel );
+	struct wlr_touch_cancel_event *event = (struct wlr_touch_cancel_event *) data;
+
+	// A cancelled point never gets an up, end it like one as the nested backend does.
+	wlserver_touchup( event->touch_id, event->time_msec );
+}
+
 static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
@@ -559,6 +569,7 @@ static void wlserver_handle_touch_destroy(struct wl_listener *listener, void *da
 	wl_list_remove( &touch->up.link );
 	wl_list_remove( &touch->motion.link );
 	wl_list_remove( &touch->frame.link );
+	wl_list_remove( &touch->cancel.link );
 	wl_list_remove( &touch->destroy.link );
 	free( touch );
 }
@@ -626,6 +637,8 @@ static void wlserver_new_input(struct wl_listener *listener, void *data)
 			wl_signal_add( &touch->wlr->events.motion, &touch->motion );
 			touch->frame.notify = wlserver_handle_touch_frame;
 			wl_signal_add( &touch->wlr->events.frame, &touch->frame );
+			touch->cancel.notify = wlserver_handle_touch_cancel;
+			wl_signal_add( &touch->wlr->events.cancel, &touch->cancel );
 			touch->destroy.notify = wlserver_handle_touch_destroy;
 			wl_signal_add( &device->events.destroy, &touch->destroy);
 
@@ -2017,12 +2030,19 @@ int wlsession_open_kms( const char *device_name ) {
 
 void wlsession_close_kms()
 {
+	// Called from steamcompmgr_exit() on the steamcompmgr thread when the
+	// DRM backend is torn down. wlr_session_close_file() makes libseat do a
+	// blocking logind ReleaseDevice call on its sd_bus connection, which the
+	// wlserver thread also dispatches from (under the wlserver lock). sd_bus
+	// isn't thread-safe, so hold the lock to keep the wlserver thread off it.
+	wlserver_lock();
 	if ( wlserver.wlr.device )
 	{
 		wl_list_remove( &wlserver.wlr.device_change_listener.link );
+		wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+		wlserver.wlr.device = nullptr;
 	}
-	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
-	wlserver.wlr.device = nullptr;
+	wlserver_unlock(false);
 }
 
 #endif
@@ -2182,6 +2202,13 @@ wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, s
 
 	static uint32_t s_window_serial = 0;
 	window->xdg().id = ++s_window_serial;
+
+	// Outside Steam mode steamcompmgr gives every X11 window a synthetic appID
+	// (its window id) and focus selection prefers windows that have one. Give
+	// XDG windows the same treatment, or a native Wayland game is permanently
+	// out-focused by any X11 window of its launcher that stays mapped behind it.
+	if ( !steamMode && window->appID == 0 )
+		window->appID = 0x7FFF0000u + window->xdg().id;
 
 	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
 	xdg_surface_info->main_surface = surface;
@@ -3014,6 +3041,31 @@ static void wlserver_clampcursor()
 	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( std::max( nHeight - 1, 0 ) ) );
 }
 
+static struct wlr_surface *wlserver_pointer_surface_at( struct wlr_surface *surface, double x, double y, double *sx, double *sy )
+{
+	if ( !surface )
+		return nullptr;
+
+	if ( struct wlr_xdg_surface *xdg_surface = wlr_xdg_surface_try_from_wlr_surface( surface ) )
+		if ( struct wlr_surface *hit = wlr_xdg_surface_popup_surface_at( xdg_surface, x, y, sx, sy ) )
+			return hit;
+
+	*sx = x;
+	*sy = y;
+	return surface;
+}
+
+static void wlserver_update_pointer_focus( struct wlr_surface *surface, double sx, double sy )
+{
+	if ( wlserver.wlr.seat->pointer_state.focused_surface == surface )
+		return;
+
+	if ( surface )
+		wlr_seat_pointer_notify_enter( wlserver.wlr.seat, surface, sx, sy );
+	else
+		wlr_seat_pointer_notify_clear_focus( wlserver.wlr.seat );
+}
+
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )
 {
 	assert( wlserver_is_lock_held() );
@@ -3040,9 +3092,14 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 		}
 	}
 
+	double sx = wlserver.mouse_surface_cursorx;
+	double sy = wlserver.mouse_surface_cursory;
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlrsurface, sx, sy, &sx, &sy );
+
 	wlserver_oncursorevent();
-	wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
+	wlserver_update_pointer_focus( focus, sx, sy );
+	if ( focus && wlserver.wlr.seat->pointer_state.focused_surface == focus )
+		wlr_seat_pointer_warp( wlserver.wlr.seat, sx, sy );
 }
 
 void wlserver_clear_dropdowns()
@@ -3295,6 +3352,9 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 	double sy = wlserver.mouse_surface_cursory;
 	wlserver_drag_anchor_apply( sx, sy );
 
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlserver.mouse_focus_surface, sx, sy, &sx, &sy );
+	wlserver_update_pointer_focus( focus, sx, sy );
+
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
@@ -3317,6 +3377,9 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 	double sx = wlserver.mouse_surface_cursorx;
 	double sy = wlserver.mouse_surface_cursory;
 	wlserver_drag_anchor_apply( sx, sy );
+
+	struct wlr_surface *focus = wlserver_pointer_surface_at( wlserver.mouse_focus_surface, sx, sy, &sx, &sy );
+	wlserver_update_pointer_focus( focus, sx, sy );
 
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, sx, sy );
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
