@@ -4,7 +4,6 @@
 
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/sysmacros.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
@@ -1528,8 +1527,7 @@ static std::string resolve_prefer_drm_device( const char *pszInput )
 // We deliberately do NOT open() the device to validate it: under seatd/logind
 // the compositor process usually cannot open the primary node directly (that is
 // the session manager's job), so a plain open() would spuriously fail with
-// EACCES on perfectly valid setups. Inspect the device number instead -- DRM
-// primary node minors are 0-63, render nodes are 128+. The authoritative KMS
+// EACCES on perfectly valid setups. Let libdrm identify the node from st_rdev. The KMS
 // check (drmIsKMS) still runs later once the session opens the fd.
 static std::string resolve_and_validate_prefer_drm_device()
 {
@@ -1546,7 +1544,7 @@ static std::string resolve_and_validate_prefer_drm_device()
 		drm_log.errorf( "--prefer-drm: '%s' is not a character device", sDrmPath.c_str() );
 		return std::string();
 	}
-	if ( minor( drmStat.st_rdev ) >= 64 )
+	if ( drmGetNodeTypeFromDevId( drmStat.st_rdev ) != DRM_NODE_PRIMARY )
 	{
 		drm_log.errorf( "--prefer-drm: '%s' is not a DRM primary node; pass a KMS device such as /dev/dri/cardX (not a render node)", sDrmPath.c_str() );
 		return std::string();
@@ -1606,8 +1604,13 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 				drm_log.errorf("Failed to find DRM device with device ID %" PRIu64, (uint64_t)dev_id);
 				return false;
 			}
-			assert(drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY));
+			if ( !(drm_dev->available_nodes & (1 << DRM_NODE_PRIMARY)) ) {
+				drm_log.errorf("Render GPU has no DRM primary node; specify the scanout device with --prefer-drm");
+				drmFreeDevice(&drm_dev);
+				return false;
+			}
 			drm->device_name = strdup(drm_dev->nodes[DRM_NODE_PRIMARY]);
+			drmFreeDevice(&drm_dev);
 			drm_log.infof("opening DRM node '%s'", drm->device_name);
 		}
 		else
@@ -1627,7 +1630,8 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	{
 		drm_log.errorf( "'%s' is not a KMS device", drm->device_name );
 		wlsession_close_kms();
-		return -1;
+		drm->fd = -1;
+		return false;
 	}
 
 	if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_ATOMIC, 1) != 0) {
@@ -1899,7 +1903,8 @@ void finish_drm(struct drm_t *drm)
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
 		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
-		pPlane->GetProperties().IN_FENCE_FD->SetPendingValue( req, -1, true );
+		if ( pPlane->GetProperties().IN_FENCE_FD )
+			pPlane->GetProperties().IN_FENCE_FD->SetPendingValue( req, -1, true );
 		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_X->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_Y->SetPendingValue( req, 0, true );
@@ -2159,7 +2164,8 @@ struct LiftoffStateCacheEntry
 		bool ycbcr;
 		uint32_t zpos;
 		uint32_t srcW, srcH;
-		uint32_t crtcX, crtcY, crtcW, crtcH;
+		int32_t crtcX, crtcY;
+		uint32_t crtcW, crtcH;
 		uint16_t opacity;
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
@@ -3048,8 +3054,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			}
 			liftoff_layer_set_property( drm->lo_layers[ i ], "rotation", ulOrientation );
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", entry.layerState[i].crtcX);
-			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", entry.layerState[i].crtcY);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_X", (uint64_t)(int64_t)entry.layerState[i].crtcX);
+			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_Y", (uint64_t)(int64_t)entry.layerState[i].crtcY);
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", entry.layerState[i].crtcW);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", entry.layerState[i].crtcH);
