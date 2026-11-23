@@ -63,5 +63,16 @@ if ! gamescope-hermes --help > "$work/help" 2>&1; then
   exit 1
 fi
 grep -q -- '--prefer-drm' "$work/help"
+# Exercise the pre-Vulkan DRM selector checks on GPU-less package runners.
+if GAMESCOPE_PREFER_DRM="$work/missing-card" gamescope-hermes --backend drm --prefer-drm /dev/null > "$work/drm" 2>&1; then
+  echo 'Gamescope accepted a non-DRM character device' >&2
+  exit 1
+fi
+grep -Fq -- "--prefer-drm: '/dev/null' is not a DRM primary node" "$work/drm"
+if GAMESCOPE_PREFER_DRM="$work/missing-card" gamescope-hermes --backend drm > "$work/drm" 2>&1; then
+  echo 'Gamescope accepted a missing scanout device' >&2
+  exit 1
+fi
+grep -Fq -- "--prefer-drm: could not resolve DRM device '$work/missing-card'" "$work/drm"
 "$prefix/bin/gamescope" --version
 printf '%s\n' 'Installed package: PASS (no compositor/GPU session started)'
